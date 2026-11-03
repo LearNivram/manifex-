@@ -288,3 +288,74 @@ async fn refuses_plain_http_and_insecure_tls() {
     assert!(!r.ok);
     assert!(r.message.unwrap().contains("https"));
 }
+
+/// Connects through a running manifex-agent (see `agent/`). Skipped unless
+/// MANIFEX_E2E_AGENT_URL, MANIFEX_E2E_AGENT_CA and MANIFEX_E2E_AGENT_TOKEN_FILE are set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_connection_with_exec() {
+    let (Ok(url), Ok(ca), Ok(token_file)) = (
+        std::env::var("MANIFEX_E2E_AGENT_URL"),
+        std::env::var("MANIFEX_E2E_AGENT_CA"),
+        std::env::var("MANIFEX_E2E_AGENT_TOKEN_FILE"),
+    ) else {
+        eprintln!("agent e2e variables not set – skipping");
+        return;
+    };
+    let db = Arc::new(Db::open_in_memory().unwrap());
+    let vault = Arc::new(SecretVault::with_key([5u8; 32]));
+    let token = std::fs::read_to_string(&token_file).unwrap();
+    db.put_secret(&vault, "agent-tok", token.trim().as_bytes()).unwrap();
+    let mgr = ClusterManager::new(db.clone(), vault, Arc::new(NullSink));
+    let profile = ClusterProfile {
+        id: "agent".into(),
+        name: "via-agent".into(),
+        source: ClusterSource::Agent {
+            endpoint: url,
+            ca_pem: Some(std::fs::read_to_string(&ca).unwrap()),
+            proxy_url: None,
+            secret_id: "agent-tok".into(),
+        },
+        group: None,
+        favorite: false,
+        color: None,
+        environment: "staging".into(),
+        default_namespace: None,
+        alerts_enabled: false,
+        sort_order: 0,
+        created_at: String::new(),
+        last_connected_at: None,
+    };
+    db.insert_cluster(&profile).unwrap();
+    let status = mgr.connect("agent").await.expect("connect through agent");
+    assert_eq!(status.state, ConnState::Connected);
+    println!("agent identity: {:?}", status.identity);
+    let client = mgr.get("agent").unwrap().client.clone();
+
+    // a running pod in kube-system to exec into
+    let pods = ops::list_objects(client.clone(), &builtin::pods(), Some("kube-system"), None, Some("status.phase=Running"), None).await.unwrap();
+    let pod = pods
+        .iter()
+        .find(|p| p["metadata"]["name"].as_str().unwrap_or("").starts_with("local-path-provisioner"))
+        .expect("local-path-provisioner pod");
+    let name = pod["metadata"]["name"].as_str().unwrap().to_string();
+
+    let exec = Arc::new(ExecManager::default());
+    let output: Arc<Mutex<Vec<u8>>> = Arc::default();
+    let out = output.clone();
+    let session = exec
+        .start(
+            client,
+            ExecTarget { cluster_id: "agent", namespace: "kube-system", pod: &name, container: None, shell: "sh", cols: 80, rows: 24 },
+            move |d| {
+                out.lock().extend(d);
+                true
+            },
+            |_| {},
+        )
+        .await
+        .expect("exec through agent");
+    exec.write(&session, b"echo via-agent-$((6*7))\n".to_vec()).await.unwrap();
+    let ok = wait_until(Duration::from_secs(15), || String::from_utf8_lossy(&output.lock()).contains("via-agent-42")).await;
+    assert!(ok, "exec output through agent: {:?}", String::from_utf8_lossy(&output.lock()));
+    exec.close(&session);
+}

@@ -11,7 +11,15 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { "@": path.resolve(__dirname, "src") },
+    alias: [
+      { find: "@", replacement: path.resolve(import.meta.dirname, "src") },
+      // monaco-editor >= 0.55 changed its package exports; monaco-yaml still deep-imports
+      // `monaco-editor/esm/vs/...`, so map those paths onto the real files.
+      {
+        find: /^monaco-editor\/esm\/vs\/(.+?)(\.js)?(\?.*)?$/,
+        replacement: path.resolve(import.meta.dirname, "node_modules/monaco-editor/esm/vs") + "/$1.js$3",
+      },
+    ],
   },
   clearScreen: false,
   server: {
@@ -24,7 +32,7 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
-    minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
+    minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     chunkSizeWarningLimit: 4096,
   },

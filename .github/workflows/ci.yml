@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, unit tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx vite build
+
+  rust:
+    name: Rust core (fmt, clippy, unit tests)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Placeholder frontend bundle
+        run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
+      - run: cargo fmt --check
+        working-directory: src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test --lib
+        working-directory: src-tauri
+
+  e2e:
+    name: End-to-end against k3s
+    runs-on: ubuntu-22.04
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Start k3s
+        run: |
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.33.1+k3s1 sh -s - --disable=traefik --write-kubeconfig-mode=644
+          for i in $(seq 1 60); do kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get nodes && break; sleep 2; done
+          kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml wait --for=condition=Ready node --all --timeout=120s
+      - name: Placeholder frontend bundle
+        run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
+      - name: Run e2e suite
+        working-directory: src-tauri
+        env:
+          MANIFEX_E2E_KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+        run: cargo test --test cluster_e2e -- --nocapture
