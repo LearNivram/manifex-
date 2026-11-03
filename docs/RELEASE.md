@@ -1,0 +1,58 @@
+# Releases, signing & auto-update
+
+## Versioning
+
+The version lives in `package.json`, `src-tauri/Cargo.toml` and
+`src-tauri/tauri.conf.json` – bump all three together. Tags `vX.Y.Z` trigger the
+release workflow.
+
+## Updater keys (one-time)
+
+The Tauri updater verifies every update with a minisign key pair.
+
+```bash
+npx tauri signer generate -w ~/.tauri/manifex.key
+```
+
+1. Put the **public key** into `src-tauri/tauri.conf.json` →
+   `plugins.updater.pubkey` (replace `REPLACE_WITH_UPDATER_PUBLIC_KEY`).
+2. Store the **private key** and its password as repository secrets
+   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+   Never commit the private key.
+
+The updater endpoint is
+`https://github.com/<owner>/<repo>/releases/latest/download/latest.json`; the
+release workflow uploads `latest.json` and signatures automatically
+(`includeUpdaterJson: true`). Updater artifacts are only produced for release
+builds (`src-tauri/tauri.release.conf.json`), so local builds do not need the key.
+
+## Code signing (recommended)
+
+- **macOS:** set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+  `APPLE_SIGNING_IDENTITY` and, for notarisation, `APPLE_ID`, `APPLE_PASSWORD`
+  (app-specific password), `APPLE_TEAM_ID`.
+- **Windows:** configure `bundle.windows.certificateThumbprint` / signing command
+  or use Azure Trusted Signing in the workflow.
+- **Linux:** AppImage/deb/rpm are signed through the updater signature; distro
+  repositories can additionally sign packages.
+
+## Pipeline
+
+`.github/workflows/release.yml` builds on macOS (universal binary), Linux
+(ubuntu-22.04 for broad glibc compatibility) and Windows, creates a **draft**
+GitHub release with all installers and `latest.json`, and leaves publishing to a
+human.
+
+Installer formats:
+
+| Platform | Formats |
+|---|---|
+| Windows | NSIS `.exe` (per-user), `.msi` |
+| macOS | `.dmg`, `.app` (universal) |
+| Linux | `.AppImage`, `.deb`, `.rpm` |
+
+## In-app updates
+
+Settings → Updates checks the endpoint, downloads with progress, verifies the
+signature and restarts. With "Check for updates automatically" enabled the main
+window checks once at start-up and shows a notification when a new version exists.

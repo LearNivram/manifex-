@@ -1,0 +1,123 @@
+# manifex-agent – exposes this cluster's Kubernetes API to Manifex desktop clients.
+#
+# Before applying:
+#   1. Create the client token secret (≥ 16 random characters):
+#        kubectl -n manifex-system create secret generic manifex-agent-auth \
+#          --from-literal=token="$(openssl rand -hex 32)"
+#   2. Create a TLS certificate for the agent endpoint (signed by a CA you
+#      distribute to Manifex users – never use a self-signed CA certificate as the
+#      server certificate):
+#        kubectl -n manifex-system create secret tls manifex-agent-tls \
+#          --cert=tls.crt --key=tls.key
+#   3. Review the ClusterRoleBinding below – it decides what Manifex users can do.
+#
+# In Manifex: Add cluster → Direct connection → "Agent / authenticating gateway",
+# endpoint = https://<service address>:8443, token = the token from step 1,
+# CA = the CA certificate that signed tls.crt.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: manifex-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: manifex-agent
+  namespace: manifex-system
+---
+# Least privilege by default: read-only access. Bind "edit", "admin" or a custom
+# role instead if remote users need to change resources.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: manifex-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: manifex-agent
+    namespace: manifex-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manifex-agent
+  namespace: manifex-system
+  labels:
+    app.kubernetes.io/name: manifex-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: manifex-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: manifex-agent
+    spec:
+      serviceAccountName: manifex-agent
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: ghcr.io/learnivram/manifex-agent:0.1.0
+          ports:
+            - containerPort: 8443
+              name: https
+          env:
+            # Optional: impersonate a user/groups instead of using the agent's own
+            # service account identity (requires the "impersonate" verb).
+            # - name: MANIFEX_AGENT_IMPERSONATE_USER
+            #   value: remote-operator
+            - name: MANIFEX_AGENT_LISTEN
+              value: "0.0.0.0:8443"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/manifex-agent/tls
+              readOnly: true
+            - name: auth
+              mountPath: /etc/manifex-agent/auth
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: manifex-agent-tls
+        - name: auth
+          secret:
+            secretName: manifex-agent-auth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manifex-agent
+  namespace: manifex-system
+spec:
+  # Use LoadBalancer or an Ingress with TLS passthrough to reach the agent from
+  # outside the cluster network.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: manifex-agent
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
