@@ -1,13 +1,14 @@
 name: Release
 
-# Builds signed installers for Windows (NSIS/MSI), macOS (DMG, universal) and
-# Linux (AppImage/deb/rpm) and publishes `latest.json` for the auto-updater.
+# Builds installers for macOS (universal DMG), Windows (NSIS .exe + .msi) and
+# Linux (AppImage/deb/rpm) and attaches them to a *draft* GitHub release.
 #
-# Required repository secrets:
-#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD  (updater signatures)
-# Optional (code signing / notarisation):
+# Optional repository secrets – the pipeline works without them:
+#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#       → signed updater artifacts + latest.json for the in-app auto-updater
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-#   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID, WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD
+#   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+#       → Developer-ID signed and notarised macOS app (otherwise ad-hoc signed)
 
 on:
   push:
@@ -19,38 +20,50 @@ permissions:
 
 jobs:
   build:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          - name: macOS (universal)
+            platform: macos-latest
             args: --target universal-apple-darwin
-          - platform: ubuntu-22.04
+          - name: Windows
+            platform: windows-latest
             args: ""
-          - platform: windows-latest
+          - name: Linux
+            platform: ubuntu-22.04
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
       - name: Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev patchelf
+
       - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
+
+      # Only export signing variables that are actually configured: an empty
+      # APPLE_CERTIFICATE / TAURI_SIGNING_PRIVATE_KEY would make the bundler fail.
+      - name: Configure optional signing
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -59,11 +72,48 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          export_if_set() {
+            local name="$1"
+            local value="${!name}"
+            if [ -n "$value" ]; then
+              {
+                echo "$name<<__EOF__"
+                echo "$value"
+                echo "__EOF__"
+              } >> "$GITHUB_ENV"
+            fi
+          }
+          for v in TAURI_SIGNING_PRIVATE_KEY_PASSWORD APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            export_if_set "$v"
+          done
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            export_if_set TAURI_SIGNING_PRIVATE_KEY
+            echo "EXTRA_ARGS=--config src-tauri/tauri.release.conf.json" >> "$GITHUB_ENV"
+            echo "UPDATER_JSON=true" >> "$GITHUB_ENV"
+            echo "Updater artifacts: enabled"
+          else
+            echo "UPDATER_JSON=false" >> "$GITHUB_ENV"
+            echo "Updater artifacts: disabled (TAURI_SIGNING_PRIVATE_KEY not set)"
+          fi
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Manifex ${{ github.ref_name }}
-          releaseBody: See CHANGELOG.md for details.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: Manifex ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseBody: |
+            Manifex – native Kubernetes management.
+
+            **Downloads**
+            - macOS (Apple Silicon & Intel): `Manifex_*_universal.dmg`
+            - Windows: `Manifex_*_x64-setup.exe` (recommended) or `Manifex_*_x64_en-US.msi`
+            - Linux: `.AppImage`, `.deb`, `.rpm`
+
+            Builds without code-signing certificates: on macOS open the app via right-click → Open the first time; on Windows choose "More info → Run anyway" in SmartScreen.
+            See CHANGELOG.md for details.
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
-          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          includeUpdaterJson: ${{ env.UPDATER_JSON == 'true' }}
+          args: ${{ matrix.args }} ${{ env.EXTRA_ARGS }}

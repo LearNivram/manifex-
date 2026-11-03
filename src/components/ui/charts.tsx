@@ -1,6 +1,6 @@
 // Lightweight SVG charts (no chart library: small bundle, crisp at any DPI).
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/format";
 
 export interface Series {
@@ -22,7 +22,16 @@ export function LineChart({
   max?: number;
   className?: string;
 }) {
-  const W = 600;
+  // Draw in real pixels (no preserveAspectRatio stretching → crisp, undistorted labels).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(600);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setW(Math.max(200, Math.round(e.contentRect.width))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const H = height;
   const pad = { l: 44, r: 8, t: 8, b: 18 };
   const { tMin, tMax, vMax } = useMemo(() => {
@@ -36,8 +45,8 @@ export function LineChart({
   const y = (v: number) => pad.t + (1 - v / vMax) * (H - pad.t - pad.b);
   const ticks = [0, 0.5, 1].map((f) => f * vMax);
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height }} preserveAspectRatio="none" role="img">
+    <div ref={wrapRef} className={cn("flex flex-col gap-2", className)}>
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block max-w-full" role="img">
         {ticks.map((t) => (
           <g key={t}>
             <line x1={pad.l} x2={W - pad.r} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeDasharray={t === 0 ? undefined : "3 3"} vectorEffect="non-scaling-stroke" />

@@ -56,3 +56,15 @@ Installer formats:
 Settings → Updates checks the endpoint, downloads with progress, verifies the
 signature and restarts. With "Check for updates automatically" enabled the main
 window checks once at start-up and shows a notification when a new version exists.
+
+## Releasing without certificates
+
+The pipeline also works with no secrets configured: macOS builds are ad-hoc
+signed (`signingIdentity: "-"`), Windows installers are unsigned, and updater
+artifacts are skipped. Users then confirm the first launch (macOS: right-click →
+Open; Windows SmartScreen: More info → Run anyway). Add the secrets above to get
+signed, notarised builds and in-app updates.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0   # starts .github/workflows/release.yml
+```

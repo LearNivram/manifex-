@@ -42,7 +42,9 @@
         "frame-ancestors": "'none'"
       },
       "freezePrototype": false,
-      "capabilities": ["main-capability"]
+      "capabilities": [
+        "main-capability"
+      ]
     }
   },
   "bundle": {
@@ -51,7 +53,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Kubernetes management for professionals",
     "longDescription": "Manifex is a native desktop application to manage, observe and operate Kubernetes clusters.",
-    "copyright": "© Manifex Contributors",
+    "copyright": "\u00a9 Manifex Contributors",
     "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
@@ -62,16 +64,29 @@
     ],
     "resources": [],
     "linux": {
-      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"] },
-      "appimage": { "bundleMediaFramework": false }
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
     },
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "signingIdentity": "-"
     },
     "windows": {
-      "webviewInstallMode": { "type": "embedBootstrapper" },
-      "nsis": { "installMode": "currentUser" }
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
     }
   },
   "plugins": {
@@ -80,10 +95,16 @@
       "endpoints": [
         "https://github.com/learnivram/manifex-/releases/latest/download/latest.json"
       ],
-      "windows": { "installMode": "passive" }
+      "windows": {
+        "installMode": "passive"
+      }
     },
     "deep-link": {
-      "desktop": { "schemes": ["manifex"] }
+      "desktop": {
+        "schemes": [
+          "manifex"
+        ]
+      }
     }
   }
 }
