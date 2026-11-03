@@ -23,9 +23,11 @@ impl Db {
 
     pub fn get_secret(&self, vault: &SecretVault, id: &str) -> AppResult<Vec<u8>> {
         let row: Option<(Vec<u8>, Vec<u8>)> = self.with(|c| {
-            c.query_row("SELECT nonce, ciphertext FROM secrets WHERE id=?1", [id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            c.query_row(
+                "SELECT nonce, ciphertext FROM secrets WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()
         })?;
         let (nonce, ciphertext) = row.ok_or_else(|| AppError::NotFound(format!("secret {id}")))?;
@@ -47,7 +49,13 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let vault = SecretVault::with_key([3u8; 32]);
         db.put_secret(&vault, "s1", b"my-token").unwrap();
-        let raw: Vec<u8> = db.with(|c| c.query_row("SELECT ciphertext FROM secrets WHERE id='s1'", [], |r| r.get(0))).unwrap();
+        let raw: Vec<u8> = db
+            .with(|c| {
+                c.query_row("SELECT ciphertext FROM secrets WHERE id='s1'", [], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap();
         assert!(!raw.windows(8).any(|w| w == b"my-token"));
         assert_eq!(db.get_secret(&vault, "s1").unwrap(), b"my-token");
         db.delete_secret("s1").unwrap();

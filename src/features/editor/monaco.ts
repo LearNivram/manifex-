@@ -3,7 +3,7 @@
 
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import EditorWorker from "./editor.worker?worker";
 import { configureMonacoYaml, type JSONSchema } from "monaco-yaml";
 import YamlWorker from "./yaml.worker?worker";
 

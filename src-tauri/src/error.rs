@@ -21,7 +21,11 @@ pub enum AppError {
     #[error("secure credential store unavailable: {0}")]
     Vault(String),
     #[error("{message}")]
-    Kube { message: String, status: Option<u16>, reason: Option<String> },
+    Kube {
+        message: String,
+        status: Option<u16>,
+        reason: Option<String>,
+    },
     #[error("database error: {0}")]
     Database(String),
     #[error("i/o error: {0}")]
@@ -43,9 +47,15 @@ impl AppError {
             AppError::Connection(_) => "connection",
             AppError::Security(_) => "security",
             AppError::Vault(_) => "vault",
-            AppError::Kube { status: Some(403), .. } => "forbidden",
-            AppError::Kube { status: Some(404), .. } => "not_found",
-            AppError::Kube { status: Some(409), .. } => "conflict",
+            AppError::Kube {
+                status: Some(403), ..
+            } => "forbidden",
+            AppError::Kube {
+                status: Some(404), ..
+            } => "not_found",
+            AppError::Kube {
+                status: Some(409), ..
+            } => "conflict",
             AppError::Kube { .. } => "kube",
             AppError::Database(_) => "database",
             AppError::Io(_) => "io",
@@ -79,8 +89,13 @@ impl Serialize for AppError {
             AppError::Kube { status, reason, .. } => (*status, reason.as_deref()),
             _ => (None, None),
         };
-        SerializedError { code: self.code(), message: self.to_string(), status, reason }
-            .serialize(serializer)
+        SerializedError {
+            code: self.code(),
+            message: self.to_string(),
+            status,
+            reason,
+        }
+        .serialize(serializer)
     }
 }
 
@@ -100,7 +115,11 @@ impl From<kube::Error> for AppError {
             kube::Error::HyperError(e) => AppError::Connection(e.to_string()),
             kube::Error::Service(e) => AppError::Connection(e.to_string()),
             kube::Error::RustlsTls(e) => AppError::Connection(format!("TLS error: {e}")),
-            other => AppError::Kube { message: other.to_string(), status: None, reason: None },
+            other => AppError::Kube {
+                message: other.to_string(),
+                status: None,
+                reason: None,
+            },
         }
     }
 }
@@ -134,7 +153,9 @@ impl From<serde_json::Error> for AppError {
 
 impl From<serde_yaml::Error> for AppError {
     fn from(err: serde_yaml::Error) -> Self {
-        let loc = err.location().map(|l| format!(" (line {}, column {})", l.line(), l.column()));
+        let loc = err
+            .location()
+            .map(|l| format!(" (line {}, column {})", l.line(), l.column()));
         AppError::Validation(format!("invalid YAML{}: {err}", loc.unwrap_or_default()))
     }
 }
@@ -157,7 +178,11 @@ mod tests {
 
     #[test]
     fn serializes_with_code() {
-        let e = AppError::Kube { message: "denied".into(), status: Some(403), reason: Some("Forbidden".into()) };
+        let e = AppError::Kube {
+            message: "denied".into(),
+            status: Some(403),
+            reason: Some("Forbidden".into()),
+        };
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["code"], "forbidden");
         assert_eq!(v["status"], 403);

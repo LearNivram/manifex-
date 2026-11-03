@@ -29,9 +29,14 @@ impl AlertRule {
     pub fn validate(&self) -> AppResult<()> {
         crate::security::validate::display_name("rule name", &self.name)?;
         if !["info", "warning", "critical"].contains(&self.severity.as_str()) {
-            return Err(AppError::validation("severity must be info, warning or critical"));
+            return Err(AppError::validation(
+                "severity must be info, warning or critical",
+            ));
         }
-        for p in [&self.reason_pattern, &self.message_pattern].into_iter().flatten() {
+        for p in [&self.reason_pattern, &self.message_pattern]
+            .into_iter()
+            .flatten()
+        {
             if p.len() > 512 {
                 return Err(AppError::validation("pattern too long"));
             }

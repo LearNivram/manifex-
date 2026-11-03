@@ -30,10 +30,17 @@ pub async fn schema_for(conn: &ClusterConn, api_version: &str, kind: &str) -> Ap
     };
     validate::api_segment("group", group, true)?;
     validate::api_segment("version", version, false)?;
-    let path = if group.is_empty() { format!("api/{version}") } else { format!("apis/{group}/{version}") };
+    let path = if group.is_empty() {
+        format!("api/{version}")
+    } else {
+        format!("apis/{group}/{version}")
+    };
     let index = get_json(conn, "/openapi/v3").await?;
     let server_url = index
-        .pointer(&format!("/paths/{}/serverRelativeURL", path.replace('/', "~1")))
+        .pointer(&format!(
+            "/paths/{}/serverRelativeURL",
+            path.replace('/', "~1")
+        ))
         .and_then(Value::as_str)
         .map(String::from)
         .ok_or_else(|| AppError::NotFound(format!("OpenAPI document for {api_version}")))?;

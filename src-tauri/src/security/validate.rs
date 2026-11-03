@@ -9,12 +9,16 @@ use crate::error::{AppError, AppResult};
 /// RFC 1123 DNS subdomain (used for most object names). Max 253 chars.
 pub fn dns_subdomain(field: &str, value: &str) -> AppResult<()> {
     if value.is_empty() || value.len() > 253 {
-        return Err(AppError::validation(format!("{field} must be 1-253 characters")));
+        return Err(AppError::validation(format!(
+            "{field} must be 1-253 characters"
+        )));
     }
     let ok = value.split('.').all(|label| {
         !label.is_empty()
             && label.len() <= 63
-            && label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
             && !label.starts_with('-')
             && !label.ends_with('-')
     });
@@ -39,7 +43,9 @@ pub fn object_name(value: &str) -> AppResult<()> {
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b':' | b'@'));
     if !ok {
-        return Err(AppError::validation(format!("name '{value}' contains invalid characters")));
+        return Err(AppError::validation(format!(
+            "name '{value}' contains invalid characters"
+        )));
     }
     Ok(())
 }
@@ -49,11 +55,15 @@ pub fn namespace(value: &str) -> AppResult<()> {
     if value.is_empty() || value.len() > 63 {
         return Err(AppError::validation("namespace must be 1-63 characters"));
     }
-    if !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    if !value
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         || value.starts_with('-')
         || value.ends_with('-')
     {
-        return Err(AppError::validation(format!("namespace '{value}' is invalid")));
+        return Err(AppError::validation(format!(
+            "namespace '{value}' is invalid"
+        )));
     }
     Ok(())
 }
@@ -68,12 +78,20 @@ pub fn optional_namespace(value: &Option<String>) -> AppResult<()> {
 /// API group ("" for core) / version / plural.
 pub fn api_segment(field: &str, value: &str, allow_empty: bool) -> AppResult<()> {
     if value.is_empty() {
-        return if allow_empty { Ok(()) } else { Err(AppError::validation(format!("{field} is required"))) };
+        return if allow_empty {
+            Ok(())
+        } else {
+            Err(AppError::validation(format!("{field} is required")))
+        };
     }
     if value.len() > 253
-        || !value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
     {
-        return Err(AppError::validation(format!("{field} '{value}' is invalid")));
+        return Err(AppError::validation(format!(
+            "{field} '{value}' is invalid"
+        )));
     }
     Ok(())
 }
@@ -91,10 +109,14 @@ pub fn selector(value: &str) -> AppResult<()> {
 pub fn display_name(field: &str, value: &str) -> AppResult<()> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.chars().count() > 120 {
-        return Err(AppError::validation(format!("{field} must be 1-120 characters")));
+        return Err(AppError::validation(format!(
+            "{field} must be 1-120 characters"
+        )));
     }
     if trimmed.chars().any(|c| c.is_control()) {
-        return Err(AppError::validation(format!("{field} must not contain control characters")));
+        return Err(AppError::validation(format!(
+            "{field} must not contain control characters"
+        )));
     }
     Ok(())
 }
@@ -117,11 +139,15 @@ pub fn https_url(field: &str, value: &str) -> AppResult<http::Uri> {
 
 /// Proxy URLs may be http(s) or socks5.
 pub fn proxy_url(value: &str) -> AppResult<http::Uri> {
-    let uri: http::Uri =
-        value.trim().parse().map_err(|_| AppError::validation("proxy URL is invalid"))?;
+    let uri: http::Uri = value
+        .trim()
+        .parse()
+        .map_err(|_| AppError::validation("proxy URL is invalid"))?;
     match uri.scheme_str() {
         Some("http") | Some("https") | Some("socks5") | Some("socks5h") => Ok(uri),
-        _ => Err(AppError::validation("proxy URL must use http, https or socks5")),
+        _ => Err(AppError::validation(
+            "proxy URL must use http, https or socks5",
+        )),
     }
 }
 
@@ -165,7 +191,9 @@ pub fn helm_chart_ref(value: &str) -> AppResult<()> {
         return Err(AppError::validation("chart reference is invalid"));
     }
     if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err(AppError::validation("chart reference must not contain whitespace"));
+        return Err(AppError::validation(
+            "chart reference must not contain whitespace",
+        ));
     }
     Ok(())
 }
@@ -173,7 +201,13 @@ pub fn helm_chart_ref(value: &str) -> AppResult<()> {
 pub fn helm_version(value: &str) -> AppResult<()> {
     if value.len() > 64
         || value.starts_with('-')
-        || !value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+' | b'^' | b'~' | b'*' | b'<' | b'>' | b'=' | b' ' | b','))
+        || !value.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'.' | b'-' | b'+' | b'^' | b'~' | b'*' | b'<' | b'>' | b'=' | b' ' | b','
+                )
+        })
     {
         return Err(AppError::validation("chart version is invalid"));
     }
@@ -184,7 +218,9 @@ pub fn helm_repo_name(value: &str) -> AppResult<()> {
     if value.is_empty()
         || value.len() > 100
         || value.starts_with('-')
-        || !value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
     {
         return Err(AppError::validation("repository name is invalid"));
     }

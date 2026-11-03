@@ -41,7 +41,9 @@ pub struct LogManager {
 
 impl Default for LogManager {
     fn default() -> Self {
-        Self { streams: Mutex::new(HashMap::new()) }
+        Self {
+            streams: Mutex::new(HashMap::new()),
+        }
     }
 }
 

@@ -74,13 +74,19 @@ pub struct SecretVault {
 
 impl SecretVault {
     pub fn os_backed() -> Self {
-        Self { source: KeySource::Keyring, key: Mutex::new(None) }
+        Self {
+            source: KeySource::Keyring,
+            key: Mutex::new(None),
+        }
     }
 
     /// Creates a vault with a caller-provided key. Intended for automated tests and
     /// headless tooling; the desktop application always uses [`Self::os_backed`].
     pub fn with_key(key: [u8; 32]) -> Self {
-        Self { source: KeySource::Fixed, key: Mutex::new(Some(Zeroizing(key))) }
+        Self {
+            source: KeySource::Fixed,
+            key: Mutex::new(Some(Zeroizing(key))),
+        }
     }
 
     /// Reports whether the native credential store is reachable.
@@ -122,7 +128,9 @@ impl SecretVault {
                 let mut key = Zeroizing([0u8; 32]);
                 rand::rngs::OsRng.fill_bytes(&mut key[..]);
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&key[..]);
-                entry.set_password(&encoded).map_err(|e| AppError::Vault(e.to_string()))?;
+                entry
+                    .set_password(&encoded)
+                    .map_err(|e| AppError::Vault(e.to_string()))?;
                 tracing::info!("created new vault master key in OS credential store");
                 Ok(key)
             }
@@ -146,9 +154,18 @@ impl SecretVault {
             let mut nonce = [0u8; 24];
             rand::rngs::OsRng.fill_bytes(&mut nonce);
             let ciphertext = cipher
-                .encrypt(XNonce::from_slice(&nonce), Payload { msg: plaintext, aad: secret_id.as_bytes() })
+                .encrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: plaintext,
+                        aad: secret_id.as_bytes(),
+                    },
+                )
                 .map_err(|_| AppError::Vault("encryption failed".into()))?;
-            Ok(EncryptedSecret { nonce: nonce.to_vec(), ciphertext })
+            Ok(EncryptedSecret {
+                nonce: nonce.to_vec(),
+                ciphertext,
+            })
         })
     }
 
@@ -160,9 +177,16 @@ impl SecretVault {
             cipher
                 .decrypt(
                     XNonce::from_slice(&secret.nonce),
-                    Payload { msg: &secret.ciphertext, aad: secret_id.as_bytes() },
+                    Payload {
+                        msg: &secret.ciphertext,
+                        aad: secret_id.as_bytes(),
+                    },
                 )
-                .map_err(|_| AppError::Vault("decryption failed – secret was tampered with or key changed".into()))
+                .map_err(|_| {
+                    AppError::Vault(
+                        "decryption failed – secret was tampered with or key changed".into(),
+                    )
+                })
         })
     }
 }

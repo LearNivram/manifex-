@@ -35,15 +35,23 @@ pub async fn list_clusters(state: State<'_, AppState>) -> AppResult<Vec<ClusterV
 
 fn mark_added(state: &AppState, mut d: DiscoveredKubeconfig) -> DiscoveredKubeconfig {
     for c in d.contexts.iter_mut() {
-        c.already_added = state.db.cluster_exists_for_kubeconfig(&d.path, &c.name).unwrap_or(false);
+        c.already_added = state
+            .db
+            .cluster_exists_for_kubeconfig(&d.path, &c.name)
+            .unwrap_or(false);
     }
     d
 }
 
 #[tauri::command]
-pub async fn discover_kubeconfigs(state: State<'_, AppState>) -> AppResult<Vec<DiscoveredKubeconfig>> {
+pub async fn discover_kubeconfigs(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<DiscoveredKubeconfig>> {
     let found = tokio::task::spawn_blocking(|| {
-        kubeconfig::candidate_paths().into_iter().map(|p| kubeconfig::inspect_path(&p)).collect::<Vec<_>>()
+        kubeconfig::candidate_paths()
+            .into_iter()
+            .map(|p| kubeconfig::inspect_path(&p))
+            .collect::<Vec<_>>()
     })
     .await?;
     Ok(found
@@ -56,7 +64,10 @@ pub async fn discover_kubeconfigs(state: State<'_, AppState>) -> AppResult<Vec<D
 /// Opens a native file dialog in the Rust core; the frontend never gets file
 /// system access.
 #[tauri::command]
-pub async fn pick_kubeconfig_file(app: AppHandle, state: State<'_, AppState>) -> AppResult<Option<DiscoveredKubeconfig>> {
+pub async fn pick_kubeconfig_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Option<DiscoveredKubeconfig>> {
     let mut builder = app.dialog().file().set_title("Import kubeconfig");
     if let Some(home) = dirs::home_dir() {
         let kube = home.join(".kube");
@@ -64,7 +75,9 @@ pub async fn pick_kubeconfig_file(app: AppHandle, state: State<'_, AppState>) ->
     }
     let picked = tokio::task::spawn_blocking(move || builder.blocking_pick_file()).await?;
     let Some(path) = picked else { return Ok(None) };
-    let path = path.into_path().map_err(|_| AppError::validation("unsupported file location"))?;
+    let path = path
+        .into_path()
+        .map_err(|_| AppError::validation("unsupported file location"))?;
     let d = kubeconfig::inspect_path(&path);
     Ok(Some(mark_added(&state, d)))
 }
@@ -82,7 +95,12 @@ pub struct KubeconfigImport {
     pub environment: Option<String>,
 }
 
-fn new_profile(name: String, source: ClusterSource, group: Option<String>, environment: Option<String>) -> AppResult<ClusterProfile> {
+fn new_profile(
+    name: String,
+    source: ClusterSource,
+    group: Option<String>,
+    environment: Option<String>,
+) -> AppResult<ClusterProfile> {
     validate::display_name("cluster name", &name)?;
     let environment = environment.unwrap_or_else(|| "development".into());
     if !ENVIRONMENTS.contains(&environment.as_str()) {
@@ -95,11 +113,12 @@ fn new_profile(name: String, source: ClusterSource, group: Option<String>, envir
     }
     let lower = name.to_lowercase();
     // Sensible default: names that look like production are flagged as production.
-    let environment = if environment == "development" && (lower.contains("prod") || lower.contains("prd")) {
-        "production".to_string()
-    } else {
-        environment
-    };
+    let environment =
+        if environment == "development" && (lower.contains("prod") || lower.contains("prd")) {
+            "production".to_string()
+        } else {
+            environment
+        };
     Ok(ClusterProfile {
         id: uuid::Uuid::new_v4().to_string(),
         name: name.trim().to_string(),
@@ -117,7 +136,11 @@ fn new_profile(name: String, source: ClusterSource, group: Option<String>, envir
 }
 
 #[tauri::command]
-pub async fn add_kubeconfig_clusters(app: AppHandle, state: State<'_, AppState>, entries: Vec<KubeconfigImport>) -> AppResult<Vec<ClusterProfile>> {
+pub async fn add_kubeconfig_clusters(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    entries: Vec<KubeconfigImport>,
+) -> AppResult<Vec<ClusterProfile>> {
     if entries.is_empty() || entries.len() > 200 {
         return Err(AppError::validation("select between 1 and 200 contexts"));
     }
@@ -129,19 +152,38 @@ pub async fn add_kubeconfig_clusters(app: AppHandle, state: State<'_, AppState>,
             .into_iter()
             .find(|c| c.name == e.context)
             .ok_or_else(|| AppError::NotFound(format!("context '{}'", e.context)))?;
-        let name = e.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| e.context.clone());
+        let name = e
+            .name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| e.context.clone());
         let source = if e.store_in_vault {
             let single = kubeconfig::extract_single_context(&kc, &e.context)?;
             let yaml = kubeconfig::kubeconfig_to_yaml_with_secrets(&single)?;
             let secret_id = format!("kubeconfig-{}", uuid::Uuid::new_v4());
-            state.db.put_secret(&state.vault, &secret_id, yaml.as_bytes())?;
-            ClusterSource::StoredKubeconfig { context: e.context.clone(), secret_id }
+            state
+                .db
+                .put_secret(&state.vault, &secret_id, yaml.as_bytes())?;
+            ClusterSource::StoredKubeconfig {
+                context: e.context.clone(),
+                secret_id,
+            }
         } else {
-            if state.db.cluster_exists_for_kubeconfig(&e.path, &e.context)? {
+            if state
+                .db
+                .cluster_exists_for_kubeconfig(&e.path, &e.context)?
+            {
                 continue;
             }
-            let canonical = path.canonicalize().unwrap_or(path).to_string_lossy().to_string();
-            ClusterSource::Kubeconfig { path: canonical, context: e.context.clone() }
+            let canonical = path
+                .canonicalize()
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+            ClusterSource::Kubeconfig {
+                path: canonical,
+                context: e.context.clone(),
+            }
         };
         let mut profile = new_profile(name, source, e.group.clone(), e.environment.clone())?;
         profile.default_namespace = ctx.namespace.clone();
@@ -177,9 +219,18 @@ pub struct DirectClusterRequest {
     pub environment: Option<String>,
 }
 
+/// (source, secret bytes, name, group, environment)
+type DirectParts = (
+    ClusterSource,
+    Vec<u8>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
 impl DirectClusterRequest {
-    /// Validates the request and returns (source, secret bytes).
-    fn into_parts(self, secret_id: String) -> AppResult<(ClusterSource, Vec<u8>, String, Option<String>, Option<String>)> {
+    /// Validates the request and splits it into its persisted parts.
+    fn into_parts(self, secret_id: String) -> AppResult<DirectParts> {
         validate::https_url("server", &self.server)?;
         if let Some(p) = self.proxy_url.as_deref().filter(|p| !p.is_empty()) {
             validate::proxy_url(p)?;
@@ -193,13 +244,27 @@ impl DirectClusterRequest {
         let (source, secret) = match self.kind.as_str() {
             "token" | "agent" => {
                 let token = self.token.unwrap_or_default().trim().to_string();
-                if token.is_empty() || token.len() > 16 * 1024 || token.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                if token.is_empty()
+                    || token.len() > 16 * 1024
+                    || token.chars().any(|c| c.is_whitespace() || c.is_control())
+                {
                     return Err(AppError::validation("a valid bearer token is required"));
                 }
                 let source = if self.kind == "token" {
-                    ClusterSource::Token { server: self.server.trim().into(), ca_pem, tls_server_name: tls, proxy_url: proxy, secret_id }
+                    ClusterSource::Token {
+                        server: self.server.trim().into(),
+                        ca_pem,
+                        tls_server_name: tls,
+                        proxy_url: proxy,
+                        secret_id,
+                    }
                 } else {
-                    ClusterSource::Agent { endpoint: self.server.trim().into(), ca_pem, proxy_url: proxy, secret_id }
+                    ClusterSource::Agent {
+                        endpoint: self.server.trim().into(),
+                        ca_pem,
+                        proxy_url: proxy,
+                        secret_id,
+                    }
                 };
                 (source, token.into_bytes())
             }
@@ -208,29 +273,63 @@ impl DirectClusterRequest {
                 let key = self.key_pem.unwrap_or_default();
                 kubeconfig::pem_to_b64(&cert)?;
                 if !key.contains("PRIVATE KEY-----") {
-                    return Err(AppError::validation("a PEM encoded private key is required"));
+                    return Err(AppError::validation(
+                        "a PEM encoded private key is required",
+                    ));
                 }
-                let creds = serde_json::to_vec(&CertificateCredentials { cert_pem: cert, key_pem: key })?;
+                let creds = serde_json::to_vec(&CertificateCredentials {
+                    cert_pem: cert,
+                    key_pem: key,
+                })?;
                 (
-                    ClusterSource::Certificate { server: self.server.trim().into(), ca_pem, tls_server_name: tls, proxy_url: proxy, secret_id },
+                    ClusterSource::Certificate {
+                        server: self.server.trim().into(),
+                        ca_pem,
+                        tls_server_name: tls,
+                        proxy_url: proxy,
+                        secret_id,
+                    },
                     creds,
                 )
             }
-            other => return Err(AppError::validation(format!("unknown connection type {other}"))),
+            other => {
+                return Err(AppError::validation(format!(
+                    "unknown connection type {other}"
+                )))
+            }
         };
         Ok((source, secret, self.name, self.group, self.environment))
     }
 }
 
 #[tauri::command]
-pub async fn test_direct_cluster(state: State<'_, AppState>, request: DirectClusterRequest) -> AppResult<ConnectionTestResult> {
+pub async fn test_direct_cluster(
+    state: State<'_, AppState>,
+    request: DirectClusterRequest,
+) -> AppResult<ConnectionTestResult> {
     let (source, secret, name, group, env) = request.into_parts("unsaved".into())?;
-    let profile = new_profile(if name.trim().is_empty() { "test".into() } else { name }, source, group, env)?;
-    state.clusters.test_with_secret(&profile, Some(secret)).await
+    let profile = new_profile(
+        if name.trim().is_empty() {
+            "test".into()
+        } else {
+            name
+        },
+        source,
+        group,
+        env,
+    )?;
+    state
+        .clusters
+        .test_with_secret(&profile, Some(secret))
+        .await
 }
 
 #[tauri::command]
-pub async fn add_direct_cluster(app: AppHandle, state: State<'_, AppState>, request: DirectClusterRequest) -> AppResult<ClusterProfile> {
+pub async fn add_direct_cluster(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: DirectClusterRequest,
+) -> AppResult<ClusterProfile> {
     let secret_id = format!("cred-{}", uuid::Uuid::new_v4());
     let (source, secret, name, group, env) = request.into_parts(secret_id.clone())?;
     let profile = new_profile(name, source, group, env)?;
@@ -252,7 +351,12 @@ pub async fn add_direct_cluster(app: AppHandle, state: State<'_, AppState>, requ
 }
 
 #[tauri::command]
-pub async fn update_cluster(app: AppHandle, state: State<'_, AppState>, id: String, patch: ClusterPatch) -> AppResult<ClusterProfile> {
+pub async fn update_cluster(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    patch: ClusterPatch,
+) -> AppResult<ClusterProfile> {
     if let Some(n) = &patch.name {
         validate::display_name("cluster name", n)?;
     }
@@ -283,7 +387,11 @@ pub async fn update_cluster(app: AppHandle, state: State<'_, AppState>, id: Stri
 }
 
 #[tauri::command]
-pub async fn remove_cluster(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub async fn remove_cluster(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<()> {
     disconnect_internal(&state, &id);
     if let Some(profile) = state.db.delete_cluster(&id)? {
         if let Some(sid) = profile.source.secret_id() {
@@ -303,7 +411,10 @@ pub async fn remove_cluster(app: AppHandle, state: State<'_, AppState>, id: Stri
 }
 
 #[tauri::command]
-pub async fn test_cluster(state: State<'_, AppState>, id: String) -> AppResult<ConnectionTestResult> {
+pub async fn test_cluster(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<ConnectionTestResult> {
     let profile = state.db.get_cluster(&id)?;
     state.clusters.test(&profile).await
 }
@@ -339,7 +450,11 @@ pub async fn cluster_statuses(state: State<'_, AppState>) -> AppResult<Vec<Clust
 }
 
 #[tauri::command]
-pub async fn list_api_resources(state: State<'_, AppState>, cluster_id: String, refresh: Option<bool>) -> AppResult<Vec<ApiResourceInfo>> {
+pub async fn list_api_resources(
+    state: State<'_, AppState>,
+    cluster_id: String,
+    refresh: Option<bool>,
+) -> AppResult<Vec<ApiResourceInfo>> {
     let conn = state.conn(&cluster_id)?;
     let discovery = conn.discovery(refresh.unwrap_or(false)).await?;
     Ok(resources::list_api_resources(&discovery))

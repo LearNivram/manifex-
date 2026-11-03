@@ -114,7 +114,11 @@ fn release_from_json(v: &Value) -> HelmRelease {
     }
 }
 
-async fn release_secrets(client: Client, namespace: Option<&str>, name: Option<&str>) -> AppResult<Vec<Secret>> {
+async fn release_secrets(
+    client: Client,
+    namespace: Option<&str>,
+    name: Option<&str>,
+) -> AppResult<Vec<Secret>> {
     let api: Api<Secret> = match namespace.filter(|n| !n.is_empty()) {
         Some(ns) => Api::namespaced(client, ns),
         None => Api::all(client),
@@ -123,14 +127,26 @@ async fn release_secrets(client: Client, namespace: Option<&str>, name: Option<&
     if let Some(n) = name {
         selector.push_str(&format!(",name={n}"));
     }
-    let list = tokio::time::timeout(Duration::from_secs(30), api.list(&ListParams::default().labels(&selector)))
-        .await
-        .map_err(|_| AppError::Connection("listing helm releases timed out".into()))??;
-    Ok(list.items.into_iter().filter(|s| s.type_.as_deref() == Some("helm.sh/release.v1")).collect())
+    let list = tokio::time::timeout(
+        Duration::from_secs(30),
+        api.list(&ListParams::default().labels(&selector)),
+    )
+    .await
+    .map_err(|_| AppError::Connection("listing helm releases timed out".into()))??;
+    Ok(list
+        .items
+        .into_iter()
+        .filter(|s| s.type_.as_deref() == Some("helm.sh/release.v1"))
+        .collect())
 }
 
 fn label(secret: &Secret, key: &str) -> Option<String> {
-    secret.metadata.labels.as_ref().and_then(|l| l.get(key)).cloned()
+    secret
+        .metadata
+        .labels
+        .as_ref()
+        .and_then(|l| l.get(key))
+        .cloned()
 }
 
 pub async fn list_releases(client: Client, namespace: Option<&str>) -> AppResult<Vec<HelmRelease>> {
@@ -139,7 +155,10 @@ pub async fn list_releases(client: Client, namespace: Option<&str>) -> AppResult
     // Keep only the latest revision per (namespace, name); decode just those.
     let mut latest: BTreeMap<(String, String), (i64, &Secret)> = BTreeMap::new();
     for sec in &secrets {
-        let (Some(name), Some(ver)) = (label(sec, "name"), label(sec, "version").and_then(|v| v.parse::<i64>().ok())) else {
+        let (Some(name), Some(ver)) = (
+            label(sec, "name"),
+            label(sec, "version").and_then(|v| v.parse::<i64>().ok()),
+        ) else {
             continue;
         };
         let ns = sec.metadata.namespace.clone().unwrap_or_default();
@@ -150,7 +169,11 @@ pub async fn list_releases(client: Client, namespace: Option<&str>) -> AppResult
     }
     let mut out = Vec::new();
     for ((ns, name), (ver, sec)) in latest {
-        let decoded = sec.data.as_ref().and_then(|d| d.get("release")).map(|b| decode_release(&b.0));
+        let decoded = sec
+            .data
+            .as_ref()
+            .and_then(|d| d.get("release"))
+            .map(|b| decode_release(&b.0));
         match decoded {
             Some(Ok(v)) => out.push(release_from_json(&v)),
             _ => out.push(HelmRelease {
@@ -174,26 +197,51 @@ pub fn manifest_resources(manifest: &str) -> Vec<ManifestResource> {
     let mut out = Vec::new();
     for doc in serde_yaml::Deserializer::from_str(manifest) {
         use serde::Deserialize as _;
-        let Ok(v) = serde_yaml::Value::deserialize(doc) else { continue };
-        let Ok(j) = serde_json::to_value(v) else { continue };
-        let (Some(api_version), Some(kind), Some(name)) = (s(&j, "/apiVersion"), s(&j, "/kind"), s(&j, "/metadata/name")) else {
+        let Ok(v) = serde_yaml::Value::deserialize(doc) else {
             continue;
         };
-        out.push(ManifestResource { api_version, kind, name, namespace: s(&j, "/metadata/namespace") });
+        let Ok(j) = serde_json::to_value(v) else {
+            continue;
+        };
+        let (Some(api_version), Some(kind), Some(name)) = (
+            s(&j, "/apiVersion"),
+            s(&j, "/kind"),
+            s(&j, "/metadata/name"),
+        ) else {
+            continue;
+        };
+        out.push(ManifestResource {
+            api_version,
+            kind,
+            name,
+            namespace: s(&j, "/metadata/namespace"),
+        });
     }
     out
 }
 
-pub async fn release_detail(client: Client, namespace: &str, name: &str) -> AppResult<HelmReleaseDetail> {
+pub async fn release_detail(
+    client: Client,
+    namespace: &str,
+    name: &str,
+) -> AppResult<HelmReleaseDetail> {
     validate::namespace(namespace)?;
     validate::helm_release(name)?;
     let secrets = release_secrets(client, Some(namespace), Some(name)).await?;
     let mut revisions: Vec<Value> = secrets
         .iter()
-        .filter_map(|s| s.data.as_ref()?.get("release").and_then(|b| decode_release(&b.0).ok()))
+        .filter_map(|s| {
+            s.data
+                .as_ref()?
+                .get("release")
+                .and_then(|b| decode_release(&b.0).ok())
+        })
         .collect();
     revisions.sort_by_key(|v| -v.pointer("/version").and_then(Value::as_i64).unwrap_or(0));
-    let latest = revisions.first().cloned().ok_or_else(|| AppError::NotFound(format!("helm release {namespace}/{name}")))?;
+    let latest = revisions
+        .first()
+        .cloned()
+        .ok_or_else(|| AppError::NotFound(format!("helm release {namespace}/{name}")))?;
     let to_yaml = |v: Option<&Value>| -> String {
         match v {
             Some(v) if !v.is_null() && v.as_object().map(|o| !o.is_empty()).unwrap_or(true) => {
@@ -242,18 +290,30 @@ pub struct HelmOutput {
 /// own kubeconfig path; for vault based profiles a private temporary file (0600) is
 /// written and deleted as soon as the command finishes.
 pub enum HelmKubeconfig {
-    Path { path: String, context: String },
-    Temp { file: tempfile::NamedTempFile, context: String },
+    Path {
+        path: String,
+        context: String,
+    },
+    Temp {
+        file: tempfile::NamedTempFile,
+        context: String,
+    },
 }
 
 impl HelmKubeconfig {
     pub fn for_source(source: &ClusterSource, secret: Option<Vec<u8>>) -> AppResult<Self> {
         match source {
-            ClusterSource::Kubeconfig { path, context } => Ok(Self::Path { path: path.clone(), context: context.clone() }),
+            ClusterSource::Kubeconfig { path, context } => Ok(Self::Path {
+                path: path.clone(),
+                context: context.clone(),
+            }),
             other => {
                 let (kc, context) = super::kubeconfig::resolve_kubeconfig(other, secret)?;
                 let yaml = super::kubeconfig::kubeconfig_to_yaml_with_secrets(&kc)?;
-                let mut file = tempfile::Builder::new().prefix("manifex-kc-").suffix(".yaml").tempfile()?;
+                let mut file = tempfile::Builder::new()
+                    .prefix("manifex-kc-")
+                    .suffix(".yaml")
+                    .tempfile()?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -270,7 +330,12 @@ impl HelmKubeconfig {
     fn args(&self) -> Vec<String> {
         match self {
             HelmKubeconfig::Path { path, context } => {
-                vec!["--kubeconfig".into(), path.clone(), "--kube-context".into(), context.clone()]
+                vec![
+                    "--kubeconfig".into(),
+                    path.clone(),
+                    "--kube-context".into(),
+                    context.clone(),
+                ]
             }
             HelmKubeconfig::Temp { file, context } => vec![
                 "--kubeconfig".into(),
@@ -288,7 +353,9 @@ impl HelmCli {
             let p = PathBuf::from(configured);
             let fname = p.file_stem().and_then(|f| f.to_str()).unwrap_or("");
             if !fname.starts_with("helm") {
-                return Err(AppError::Security("the configured Helm binary must be named 'helm'".into()));
+                return Err(AppError::Security(
+                    "the configured Helm binary must be named 'helm'".into(),
+                ));
             }
             if !p.is_file() {
                 return Err(AppError::NotFound(format!("Helm binary at {configured}")));
@@ -296,7 +363,10 @@ impl HelmCli {
             p
         } else {
             which::which("helm").map_err(|_| {
-                AppError::NotFound("Helm CLI not found on PATH. Install Helm 3 or set its path in Settings → Helm".into())
+                AppError::NotFound(
+                    "Helm CLI not found on PATH. Install Helm 3 or set its path in Settings → Helm"
+                        .into(),
+                )
             })?
         };
         Ok(Self { binary })
@@ -319,37 +389,76 @@ impl HelmCli {
             // CREATE_NO_WINDOW – avoid flashing console windows
             cmd.creation_flags(0x0800_0000);
         }
-        let child = cmd.spawn().map_err(|e| AppError::Io(format!("failed to start helm: {e}")))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| AppError::Io(format!("failed to start helm: {e}")))?;
         let out = tokio::time::timeout(timeout, child.wait_with_output())
             .await
             .map_err(|_| AppError::Internal("helm command timed out".into()))??;
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if !out.status.success() {
-            return Err(AppError::Internal(format!("helm failed: {}", stderr.trim())));
+            return Err(AppError::Internal(format!(
+                "helm failed: {}",
+                stderr.trim()
+            )));
         }
         Ok(HelmOutput { stdout, stderr })
     }
 
     pub async fn version(&self) -> AppResult<String> {
-        Ok(self.run(vec!["version".into(), "--short".into()], Duration::from_secs(10)).await?.stdout.trim().to_string())
+        Ok(self
+            .run(
+                vec!["version".into(), "--short".into()],
+                Duration::from_secs(10),
+            )
+            .await?
+            .stdout
+            .trim()
+            .to_string())
     }
 
-    pub async fn rollback(&self, kc: &HelmKubeconfig, ns: &str, name: &str, revision: i64) -> AppResult<HelmOutput> {
+    pub async fn rollback(
+        &self,
+        kc: &HelmKubeconfig,
+        ns: &str,
+        name: &str,
+        revision: i64,
+    ) -> AppResult<HelmOutput> {
         validate::namespace(ns)?;
         validate::helm_release(name)?;
         if revision < 1 {
             return Err(AppError::validation("revision must be positive"));
         }
-        let mut args = vec!["rollback".into(), name.into(), revision.to_string(), "--namespace".into(), ns.into(), "--wait".into(), "--timeout".into(), "5m".into()];
+        let mut args = vec![
+            "rollback".into(),
+            name.into(),
+            revision.to_string(),
+            "--namespace".into(),
+            ns.into(),
+            "--wait".into(),
+            "--timeout".into(),
+            "5m".into(),
+        ];
         args.extend(kc.args());
         self.run(args, Duration::from_secs(360)).await
     }
 
-    pub async fn uninstall(&self, kc: &HelmKubeconfig, ns: &str, name: &str, keep_history: bool) -> AppResult<HelmOutput> {
+    pub async fn uninstall(
+        &self,
+        kc: &HelmKubeconfig,
+        ns: &str,
+        name: &str,
+        keep_history: bool,
+    ) -> AppResult<HelmOutput> {
         validate::namespace(ns)?;
         validate::helm_release(name)?;
-        let mut args = vec!["uninstall".into(), name.into(), "--namespace".into(), ns.into()];
+        let mut args = vec![
+            "uninstall".into(),
+            name.into(),
+            "--namespace".into(),
+            ns.into(),
+        ];
         if keep_history {
             args.push("--keep-history".into());
         }
@@ -398,7 +507,10 @@ impl HelmCli {
         let mut values_file = None;
         if let Some(values) = values_yaml.filter(|v| !v.trim().is_empty()) {
             let _: serde_yaml::Value = serde_yaml::from_str(values)?;
-            let mut f = tempfile::Builder::new().prefix("manifex-values-").suffix(".yaml").tempfile()?;
+            let mut f = tempfile::Builder::new()
+                .prefix("manifex-values-")
+                .suffix(".yaml")
+                .tempfile()?;
             use std::io::Write;
             f.write_all(values.as_bytes())?;
             f.flush()?;
@@ -413,10 +525,18 @@ impl HelmCli {
     }
 
     pub async fn repo_list(&self) -> AppResult<Value> {
-        match self.run(vec!["repo".into(), "list".into(), "-o".into(), "json".into()], Duration::from_secs(15)).await {
+        match self
+            .run(
+                vec!["repo".into(), "list".into(), "-o".into(), "json".into()],
+                Duration::from_secs(15),
+            )
+            .await
+        {
             Ok(out) => Ok(serde_json::from_str(&out.stdout).unwrap_or(Value::Array(vec![]))),
             // `helm repo list` exits non-zero when no repositories exist
-            Err(AppError::Internal(msg)) if msg.contains("no repositories") => Ok(Value::Array(vec![])),
+            Err(AppError::Internal(msg)) if msg.contains("no repositories") => {
+                Ok(Value::Array(vec![]))
+            }
             Err(e) => Err(e),
         }
     }
@@ -424,17 +544,34 @@ impl HelmCli {
     pub async fn repo_add(&self, name: &str, url: &str) -> AppResult<HelmOutput> {
         validate::helm_repo_name(name)?;
         let uri = validate::https_url("repository URL", url)?;
-        self.run(vec!["repo".into(), "add".into(), name.into(), uri.to_string(), "--force-update".into()], Duration::from_secs(60))
-            .await
+        self.run(
+            vec![
+                "repo".into(),
+                "add".into(),
+                name.into(),
+                uri.to_string(),
+                "--force-update".into(),
+            ],
+            Duration::from_secs(60),
+        )
+        .await
     }
 
     pub async fn repo_remove(&self, name: &str) -> AppResult<HelmOutput> {
         validate::helm_repo_name(name)?;
-        self.run(vec!["repo".into(), "remove".into(), name.into()], Duration::from_secs(15)).await
+        self.run(
+            vec!["repo".into(), "remove".into(), name.into()],
+            Duration::from_secs(15),
+        )
+        .await
     }
 
     pub async fn repo_update(&self) -> AppResult<HelmOutput> {
-        self.run(vec!["repo".into(), "update".into()], Duration::from_secs(180)).await
+        self.run(
+            vec!["repo".into(), "update".into()],
+            Duration::from_secs(180),
+        )
+        .await
     }
 
     pub async fn search(&self, query: &str) -> AppResult<Value> {
@@ -445,7 +582,12 @@ impl HelmCli {
         if !query.trim().is_empty() {
             args.push(query.trim().into());
         }
-        args.extend(["-o".into(), "json".into(), "--max-col-width".into(), "0".into()]);
+        args.extend([
+            "-o".into(),
+            "json".into(),
+            "--max-col-width".into(),
+            "0".into(),
+        ]);
         let out = self.run(args, Duration::from_secs(30)).await?;
         Ok(serde_json::from_str(&out.stdout).unwrap_or(Value::Array(vec![])))
     }
@@ -469,8 +611,11 @@ mod tests {
 
     fn encode(v: &Value) -> Vec<u8> {
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        gz.write_all(serde_json::to_string(v).unwrap().as_bytes()).unwrap();
-        base64::engine::general_purpose::STANDARD.encode(gz.finish().unwrap()).into_bytes()
+        gz.write_all(serde_json::to_string(v).unwrap().as_bytes())
+            .unwrap();
+        base64::engine::general_purpose::STANDARD
+            .encode(gz.finish().unwrap())
+            .into_bytes()
     }
 
     #[test]
@@ -499,6 +644,9 @@ mod tests {
 
     #[test]
     fn helm_binary_name_is_enforced() {
-        assert!(matches!(HelmCli::locate("/bin/sh"), Err(AppError::Security(_))));
+        assert!(matches!(
+            HelmCli::locate("/bin/sh"),
+            Err(AppError::Security(_))
+        ));
     }
 }

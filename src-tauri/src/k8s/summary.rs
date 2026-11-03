@@ -50,15 +50,23 @@ fn get<'a>(v: &'a Value, path: &[&str]) -> Option<&'a Value> {
 }
 
 fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
-    get(v, path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+    get(v, path)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 fn condition<'a>(v: &'a Value, ty: &str) -> Option<&'a Value> {
-    arr(v, &["status", "conditions"]).iter().find(|c| c.get("type").and_then(Value::as_str) == Some(ty))
+    arr(v, &["status", "conditions"])
+        .iter()
+        .find(|c| c.get("type").and_then(Value::as_str) == Some(ty))
 }
 
 fn condition_true(v: &Value, ty: &str) -> Option<bool> {
-    condition(v, ty).and_then(|c| c.get("status")).and_then(Value::as_str).map(|s| s == "True")
+    condition(v, ty)
+        .and_then(|c| c.get("status"))
+        .and_then(Value::as_str)
+        .map(|s| s == "True")
 }
 
 fn owner(v: &Value) -> (Option<String>, Option<String>) {
@@ -80,14 +88,21 @@ fn images(spec_pod: Option<&Value>) -> Vec<String> {
     spec_pod
         .and_then(|p| p.get("containers"))
         .and_then(Value::as_array)
-        .map(|cs| cs.iter().filter_map(|c| c.get("image").and_then(Value::as_str).map(String::from)).collect())
+        .map(|cs| {
+            cs.iter()
+                .filter_map(|c| c.get("image").and_then(Value::as_str).map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 fn selector_string(sel: Option<&Value>) -> String {
     let Some(sel) = sel else { return String::new() };
     let mut parts: Vec<String> = Vec::new();
-    let labels = sel.get("matchLabels").or(Some(sel)).and_then(Value::as_object);
+    let labels = sel
+        .get("matchLabels")
+        .or(Some(sel))
+        .and_then(Value::as_object);
     if let Some(m) = labels {
         for (k, v) in m {
             if let Some(v) = v.as_str() {
@@ -119,7 +134,9 @@ fn selector_string(sel: Option<&Value>) -> String {
 /// kubectl-compatible pod status computation.
 fn pod_status(v: &Value) -> (String, Health, i64, String) {
     let phase = s(v, &["status", "phase"]).unwrap_or("Unknown").to_string();
-    let mut reason = s(v, &["status", "reason"]).map(String::from).unwrap_or_else(|| phase.clone());
+    let mut reason = s(v, &["status", "reason"])
+        .map(String::from)
+        .unwrap_or_else(|| phase.clone());
     let statuses = arr(v, &["status", "containerStatuses"]);
     let init_statuses = arr(v, &["status", "initContainerStatuses"]);
     let total = arr(v, &["spec", "containers"]).len();
@@ -135,7 +152,10 @@ fn pod_status(v: &Value) -> (String, Health, i64, String) {
             }
             reason = match t.get("reason").and_then(Value::as_str) {
                 Some(r) => format!("Init:{r}"),
-                None => format!("Init:ExitCode:{}", t.get("exitCode").and_then(Value::as_i64).unwrap_or(0)),
+                None => format!(
+                    "Init:ExitCode:{}",
+                    t.get("exitCode").and_then(Value::as_i64).unwrap_or(0)
+                ),
             };
             initializing = true;
         } else if let Some(w) = get(cs, &["state", "waiting"]) {
@@ -169,23 +189,39 @@ fn pod_status(v: &Value) -> (String, Health, i64, String) {
                     Some(r) => r.to_string(),
                     None => match t.get("signal").and_then(Value::as_i64) {
                         Some(sig) if sig != 0 => format!("Signal:{sig}"),
-                        _ => format!("ExitCode:{}", t.get("exitCode").and_then(Value::as_i64).unwrap_or(0)),
+                        _ => format!(
+                            "ExitCode:{}",
+                            t.get("exitCode").and_then(Value::as_i64).unwrap_or(0)
+                        ),
                     },
                 };
-            } else if cs.get("ready").and_then(Value::as_bool) == Some(true) && get(cs, &["state", "running"]).is_some() {
+            } else if cs.get("ready").and_then(Value::as_bool) == Some(true)
+                && get(cs, &["state", "running"]).is_some()
+            {
                 has_running = true;
                 ready += 1;
             }
         }
         if reason == "Completed" && has_running {
-            reason = if condition_true(v, "Ready") == Some(true) { "Running".into() } else { "NotReady".into() };
+            reason = if condition_true(v, "Ready") == Some(true) {
+                "Running".into()
+            } else {
+                "NotReady".into()
+            };
         }
     } else {
-        restarts += statuses.iter().map(|cs| cs.get("restartCount").and_then(Value::as_i64).unwrap_or(0)).sum::<i64>();
+        restarts += statuses
+            .iter()
+            .map(|cs| cs.get("restartCount").and_then(Value::as_i64).unwrap_or(0))
+            .sum::<i64>();
     }
 
     if get(v, &["metadata", "deletionTimestamp"]).is_some() {
-        reason = if s(v, &["status", "reason"]) == Some("NodeLost") { "Unknown".into() } else { "Terminating".into() };
+        reason = if s(v, &["status", "reason"]) == Some("NodeLost") {
+            "Unknown".into()
+        } else {
+            "Terminating".into()
+        };
     }
 
     let health = match reason.as_str() {
@@ -194,9 +230,20 @@ fn pod_status(v: &Value) -> (String, Health, i64, String) {
         "Succeeded" | "Completed" => Health::Neutral,
         "Pending" | "ContainerCreating" | "PodInitializing" | "Terminating" => Health::Pending,
         r if r.starts_with("Init:") && r.contains('/') => Health::Pending,
-        "Failed" | "Error" | "CrashLoopBackOff" | "ImagePullBackOff" | "ErrImagePull" | "OOMKilled"
-        | "CreateContainerConfigError" | "InvalidImageName" | "Evicted" | "Unknown" | "NodeLost" => Health::Error,
-        r if r.starts_with("Init:") || r.starts_with("ExitCode") || r.starts_with("Signal") => Health::Error,
+        "Failed"
+        | "Error"
+        | "CrashLoopBackOff"
+        | "ImagePullBackOff"
+        | "ErrImagePull"
+        | "OOMKilled"
+        | "CreateContainerConfigError"
+        | "InvalidImageName"
+        | "Evicted"
+        | "Unknown"
+        | "NodeLost" => Health::Error,
+        r if r.starts_with("Init:") || r.starts_with("ExitCode") || r.starts_with("Signal") => {
+            Health::Error
+        }
         _ => Health::Warning,
     };
     (reason, health, restarts, format!("{ready}/{total}"))
@@ -231,14 +278,25 @@ fn ready_ratio(ready: i64, desired: i64) -> Health {
 
 pub fn summarize(kind: &str, v: &Value) -> Row {
     let meta = v.get("metadata").cloned().unwrap_or(Value::Null);
-    let name = meta.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-    let namespace = meta.get("namespace").and_then(Value::as_str).map(String::from);
+    let name = meta
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let namespace = meta
+        .get("namespace")
+        .and_then(Value::as_str)
+        .map(String::from);
     let uid = meta
         .get("uid")
         .and_then(Value::as_str)
         .map(String::from)
         .unwrap_or_else(|| format!("{}/{}", namespace.clone().unwrap_or_default(), name));
-    let labels = meta.get("labels").and_then(Value::as_object).cloned().unwrap_or_default();
+    let labels = meta
+        .get("labels")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
     let mut cells = Map::new();
     let mut health = Health::Neutral;
     let mut status = String::new();
@@ -258,8 +316,10 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             cells.insert("node".into(), json!(s(v, &["spec", "nodeName"])));
             cells.insert("ip".into(), json!(s(v, &["status", "podIP"])));
             cells.insert("qos".into(), json!(s(v, &["status", "qosClass"])));
-            let containers: Vec<&str> =
-                arr(v, &["spec", "containers"]).iter().filter_map(|c| c.get("name").and_then(Value::as_str)).collect();
+            let containers: Vec<&str> = arr(v, &["spec", "containers"])
+                .iter()
+                .filter_map(|c| c.get("name").and_then(Value::as_str))
+                .collect();
             let init: Vec<&str> = arr(v, &["spec", "initContainers"])
                 .iter()
                 .filter_map(|c| c.get("name").and_then(Value::as_str))
@@ -271,8 +331,12 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             let mut cpu = 0.0;
             let mut mem = 0.0;
             for c in arr(v, &["spec", "containers"]) {
-                cpu += s(c, &["resources", "requests", "cpu"]).and_then(quantity::cpu_millis).unwrap_or(0.0);
-                mem += s(c, &["resources", "requests", "memory"]).and_then(quantity::bytes).unwrap_or(0.0);
+                cpu += s(c, &["resources", "requests", "cpu"])
+                    .and_then(quantity::cpu_millis)
+                    .unwrap_or(0.0);
+                mem += s(c, &["resources", "requests", "memory"])
+                    .and_then(quantity::bytes)
+                    .unwrap_or(0.0);
             }
             cells.insert("cpuRequestMillis".into(), json!(cpu));
             cells.insert("memoryRequestBytes".into(), json!(mem));
@@ -283,7 +347,9 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             cells.insert("lastTermination".into(), json!(last_restart));
         }
         "Deployment" => {
-            let desired = get(v, &["spec", "replicas"]).and_then(Value::as_i64).unwrap_or(1);
+            let desired = get(v, &["spec", "replicas"])
+                .and_then(Value::as_i64)
+                .unwrap_or(1);
             let ready = i(v, &["status", "readyReplicas"]);
             let updated = i(v, &["status", "updatedReplicas"]);
             let available = i(v, &["status", "availableReplicas"]);
@@ -291,70 +357,157 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             cells.insert("replicas".into(), json!(desired));
             cells.insert("upToDate".into(), json!(updated));
             cells.insert("available".into(), json!(available));
-            cells.insert("images".into(), json!(images(get(v, &["spec", "template", "spec"]))));
-            cells.insert("selector".into(), json!(selector_string(get(v, &["spec", "selector"]))));
-            cells.insert("strategy".into(), json!(s(v, &["spec", "strategy", "type"])));
-            cells.insert("paused".into(), json!(get(v, &["spec", "paused"]).and_then(Value::as_bool).unwrap_or(false)));
+            cells.insert(
+                "images".into(),
+                json!(images(get(v, &["spec", "template", "spec"]))),
+            );
+            cells.insert(
+                "selector".into(),
+                json!(selector_string(get(v, &["spec", "selector"]))),
+            );
+            cells.insert(
+                "strategy".into(),
+                json!(s(v, &["spec", "strategy", "type"])),
+            );
+            cells.insert(
+                "paused".into(),
+                json!(get(v, &["spec", "paused"])
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)),
+            );
             health = ready_ratio(ready, desired);
-            status = if desired == 0 { "Scaled to zero".into() } else if ready >= desired { "Available".into() } else { "Progressing".into() };
+            status = if desired == 0 {
+                "Scaled to zero".into()
+            } else if ready >= desired {
+                "Available".into()
+            } else if ready == 0 {
+                "Unavailable".into()
+            } else {
+                "Progressing".into()
+            };
             if let Some(c) = condition(v, "Progressing") {
                 if c.get("reason").and_then(Value::as_str) == Some("ProgressDeadlineExceeded") {
                     health = Health::Error;
                     status = "ProgressDeadlineExceeded".into();
                 }
             }
-            if condition(v, "ReplicaFailure").and_then(|c| c.get("status")).and_then(Value::as_str) == Some("True") {
+            if condition(v, "ReplicaFailure")
+                .and_then(|c| c.get("status"))
+                .and_then(Value::as_str)
+                == Some("True")
+            {
                 health = Health::Error;
                 status = "ReplicaFailure".into();
             }
         }
         "StatefulSet" => {
-            let desired = get(v, &["spec", "replicas"]).and_then(Value::as_i64).unwrap_or(1);
+            let desired = get(v, &["spec", "replicas"])
+                .and_then(Value::as_i64)
+                .unwrap_or(1);
             let ready = i(v, &["status", "readyReplicas"]);
             cells.insert("ready".into(), json!(format!("{ready}/{desired}")));
             cells.insert("replicas".into(), json!(desired));
             cells.insert("serviceName".into(), json!(s(v, &["spec", "serviceName"])));
-            cells.insert("images".into(), json!(images(get(v, &["spec", "template", "spec"]))));
-            cells.insert("selector".into(), json!(selector_string(get(v, &["spec", "selector"]))));
+            cells.insert(
+                "images".into(),
+                json!(images(get(v, &["spec", "template", "spec"]))),
+            );
+            cells.insert(
+                "selector".into(),
+                json!(selector_string(get(v, &["spec", "selector"]))),
+            );
             health = ready_ratio(ready, desired);
-            status = if ready >= desired { "Ready".into() } else { "Progressing".into() };
+            status = if ready >= desired {
+                "Ready".into()
+            } else {
+                "Progressing".into()
+            };
         }
         "DaemonSet" => {
             let desired = i(v, &["status", "desiredNumberScheduled"]);
             let ready = i(v, &["status", "numberReady"]);
             cells.insert("desired".into(), json!(desired));
-            cells.insert("current".into(), json!(i(v, &["status", "currentNumberScheduled"])));
+            cells.insert(
+                "current".into(),
+                json!(i(v, &["status", "currentNumberScheduled"])),
+            );
             cells.insert("ready".into(), json!(format!("{ready}/{desired}")));
-            cells.insert("upToDate".into(), json!(i(v, &["status", "updatedNumberScheduled"])));
-            cells.insert("available".into(), json!(i(v, &["status", "numberAvailable"])));
-            cells.insert("images".into(), json!(images(get(v, &["spec", "template", "spec"]))));
-            cells.insert("selector".into(), json!(selector_string(get(v, &["spec", "selector"]))));
-            let ns = get(v, &["spec", "template", "spec", "nodeSelector"]).map(|n| selector_string(Some(n)));
+            cells.insert(
+                "upToDate".into(),
+                json!(i(v, &["status", "updatedNumberScheduled"])),
+            );
+            cells.insert(
+                "available".into(),
+                json!(i(v, &["status", "numberAvailable"])),
+            );
+            cells.insert(
+                "images".into(),
+                json!(images(get(v, &["spec", "template", "spec"]))),
+            );
+            cells.insert(
+                "selector".into(),
+                json!(selector_string(get(v, &["spec", "selector"]))),
+            );
+            let ns = get(v, &["spec", "template", "spec", "nodeSelector"])
+                .map(|n| selector_string(Some(n)));
             cells.insert("nodeSelector".into(), json!(ns));
             health = ready_ratio(ready, desired);
-            status = if ready >= desired { "Ready".into() } else { "Progressing".into() };
+            status = if ready >= desired {
+                "Ready".into()
+            } else {
+                "Progressing".into()
+            };
         }
         "ReplicaSet" => {
-            let desired = get(v, &["spec", "replicas"]).and_then(Value::as_i64).unwrap_or(1);
+            let desired = get(v, &["spec", "replicas"])
+                .and_then(Value::as_i64)
+                .unwrap_or(1);
             let ready = i(v, &["status", "readyReplicas"]);
             cells.insert("desired".into(), json!(desired));
             cells.insert("current".into(), json!(i(v, &["status", "replicas"])));
             cells.insert("ready".into(), json!(format!("{ready}/{desired}")));
-            cells.insert("revision".into(), json!(s(v, &["metadata", "annotations", "deployment.kubernetes.io/revision"])));
-            cells.insert("images".into(), json!(images(get(v, &["spec", "template", "spec"]))));
+            cells.insert(
+                "revision".into(),
+                json!(s(
+                    v,
+                    &[
+                        "metadata",
+                        "annotations",
+                        "deployment.kubernetes.io/revision"
+                    ]
+                )),
+            );
+            cells.insert(
+                "images".into(),
+                json!(images(get(v, &["spec", "template", "spec"]))),
+            );
             health = ready_ratio(ready, desired);
-            status = if desired == 0 { "Inactive".into() } else if ready >= desired { "Ready".into() } else { "Progressing".into() };
+            status = if desired == 0 {
+                "Inactive".into()
+            } else if ready >= desired {
+                "Ready".into()
+            } else {
+                "Progressing".into()
+            };
         }
         "Job" => {
-            let completions = get(v, &["spec", "completions"]).and_then(Value::as_i64).unwrap_or(1);
+            let completions = get(v, &["spec", "completions"])
+                .and_then(Value::as_i64)
+                .unwrap_or(1);
             let succeeded = i(v, &["status", "succeeded"]);
             let failed = i(v, &["status", "failed"]);
             let active = i(v, &["status", "active"]);
-            cells.insert("completions".into(), json!(format!("{succeeded}/{completions}")));
+            cells.insert(
+                "completions".into(),
+                json!(format!("{succeeded}/{completions}")),
+            );
             cells.insert("active".into(), json!(active));
             cells.insert("failed".into(), json!(failed));
             cells.insert("startTime".into(), json!(s(v, &["status", "startTime"])));
-            cells.insert("completionTime".into(), json!(s(v, &["status", "completionTime"])));
+            cells.insert(
+                "completionTime".into(),
+                json!(s(v, &["status", "completionTime"])),
+            );
             if condition_true(v, "Complete") == Some(true) {
                 status = "Complete".into();
                 health = Health::Ok;
@@ -374,15 +527,31 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             }
         }
         "CronJob" => {
-            let suspended = get(v, &["spec", "suspend"]).and_then(Value::as_bool).unwrap_or(false);
+            let suspended = get(v, &["spec", "suspend"])
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             cells.insert("schedule".into(), json!(s(v, &["spec", "schedule"])));
             cells.insert("timeZone".into(), json!(s(v, &["spec", "timeZone"])));
             cells.insert("suspend".into(), json!(suspended));
             cells.insert("active".into(), json!(arr(v, &["status", "active"]).len()));
-            cells.insert("lastSchedule".into(), json!(s(v, &["status", "lastScheduleTime"])));
-            cells.insert("lastSuccessful".into(), json!(s(v, &["status", "lastSuccessfulTime"])));
-            status = if suspended { "Suspended".into() } else { "Scheduled".into() };
-            health = if suspended { Health::Neutral } else { Health::Ok };
+            cells.insert(
+                "lastSchedule".into(),
+                json!(s(v, &["status", "lastScheduleTime"])),
+            );
+            cells.insert(
+                "lastSuccessful".into(),
+                json!(s(v, &["status", "lastSuccessfulTime"])),
+            );
+            status = if suspended {
+                "Suspended".into()
+            } else {
+                "Scheduled".into()
+            };
+            health = if suspended {
+                Health::Neutral
+            } else {
+                Health::Ok
+            };
         }
         "Service" => {
             let ty = s(v, &["spec", "type"]).unwrap_or("ClusterIP");
@@ -390,15 +559,27 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             cells.insert("clusterIP".into(), json!(s(v, &["spec", "clusterIP"])));
             let mut external: Vec<String> = arr(v, &["status", "loadBalancer", "ingress"])
                 .iter()
-                .filter_map(|i| i.get("ip").or(i.get("hostname")).and_then(Value::as_str).map(String::from))
+                .filter_map(|i| {
+                    i.get("ip")
+                        .or(i.get("hostname"))
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                })
                 .collect();
-            external.extend(arr(v, &["spec", "externalIPs"]).iter().filter_map(|x| x.as_str().map(String::from)));
+            external.extend(
+                arr(v, &["spec", "externalIPs"])
+                    .iter()
+                    .filter_map(|x| x.as_str().map(String::from)),
+            );
             if let Some(en) = s(v, &["spec", "externalName"]) {
                 external.push(en.to_string());
             }
             cells.insert("externalIP".into(), json!(external.join(", ")));
             cells.insert("ports".into(), json!(ports_string(v)));
-            cells.insert("selector".into(), json!(selector_string(get(v, &["spec", "selector"]))));
+            cells.insert(
+                "selector".into(),
+                json!(selector_string(get(v, &["spec", "selector"]))),
+            );
             if ty == "LoadBalancer" && external.is_empty() {
                 status = "Pending".into();
                 health = Health::Pending;
@@ -408,34 +589,78 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             }
         }
         "Ingress" => {
-            let hosts: Vec<&str> = arr(v, &["spec", "rules"]).iter().filter_map(|r| r.get("host").and_then(Value::as_str)).collect();
+            let hosts: Vec<&str> = arr(v, &["spec", "rules"])
+                .iter()
+                .filter_map(|r| r.get("host").and_then(Value::as_str))
+                .collect();
             let address: Vec<&str> = arr(v, &["status", "loadBalancer", "ingress"])
                 .iter()
                 .filter_map(|i| i.get("ip").or(i.get("hostname")).and_then(Value::as_str))
                 .collect();
             cells.insert("class".into(), json!(s(v, &["spec", "ingressClassName"])));
-            cells.insert("hosts".into(), json!(if hosts.is_empty() { "*".to_string() } else { hosts.join(", ") }));
+            cells.insert(
+                "hosts".into(),
+                json!(if hosts.is_empty() {
+                    "*".to_string()
+                } else {
+                    hosts.join(", ")
+                }),
+            );
             cells.insert("address".into(), json!(address.join(", ")));
             cells.insert("tls".into(), json!(!arr(v, &["spec", "tls"]).is_empty()));
-            status = if address.is_empty() { "Pending".into() } else { "Active".into() };
-            health = if address.is_empty() { Health::Pending } else { Health::Ok };
+            status = if address.is_empty() {
+                "Pending".into()
+            } else {
+                "Active".into()
+            };
+            health = if address.is_empty() {
+                Health::Pending
+            } else {
+                Health::Ok
+            };
         }
         "IngressClass" => {
             cells.insert("controller".into(), json!(s(v, &["spec", "controller"])));
-            let default = s(v, &["metadata", "annotations", "ingressclass.kubernetes.io/is-default-class"]) == Some("true");
+            let default = s(
+                v,
+                &[
+                    "metadata",
+                    "annotations",
+                    "ingressclass.kubernetes.io/is-default-class",
+                ],
+            ) == Some("true");
             cells.insert("default".into(), json!(default));
         }
         "NetworkPolicy" => {
             let sel = selector_string(get(v, &["spec", "podSelector"]));
-            cells.insert("podSelector".into(), json!(if sel.is_empty() { "<all pods>".to_string() } else { sel }));
-            let types: Vec<&str> = arr(v, &["spec", "policyTypes"]).iter().filter_map(Value::as_str).collect();
+            cells.insert(
+                "podSelector".into(),
+                json!(if sel.is_empty() {
+                    "<all pods>".to_string()
+                } else {
+                    sel
+                }),
+            );
+            let types: Vec<&str> = arr(v, &["spec", "policyTypes"])
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
             cells.insert("policyTypes".into(), json!(types.join(", ")));
-            cells.insert("ingressRules".into(), json!(arr(v, &["spec", "ingress"]).len()));
-            cells.insert("egressRules".into(), json!(arr(v, &["spec", "egress"]).len()));
+            cells.insert(
+                "ingressRules".into(),
+                json!(arr(v, &["spec", "ingress"]).len()),
+            );
+            cells.insert(
+                "egressRules".into(),
+                json!(arr(v, &["spec", "egress"]).len()),
+            );
         }
         "Gateway" => {
             cells.insert("class".into(), json!(s(v, &["spec", "gatewayClassName"])));
-            let addrs: Vec<&str> = arr(v, &["status", "addresses"]).iter().filter_map(|a| a.get("value").and_then(Value::as_str)).collect();
+            let addrs: Vec<&str> = arr(v, &["status", "addresses"])
+                .iter()
+                .filter_map(|a| a.get("value").and_then(Value::as_str))
+                .collect();
             cells.insert("addresses".into(), json!(addrs.join(", ")));
             let listeners: Vec<String> = arr(v, &["spec", "listeners"])
                 .iter()
@@ -464,7 +689,10 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             }
         }
         "GatewayClass" => {
-            cells.insert("controller".into(), json!(s(v, &["spec", "controllerName"])));
+            cells.insert(
+                "controller".into(),
+                json!(s(v, &["spec", "controllerName"])),
+            );
             match condition_true(v, "Accepted") {
                 Some(true) => {
                     status = "Accepted".into();
@@ -478,9 +706,15 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             }
         }
         "HTTPRoute" | "GRPCRoute" | "TLSRoute" | "TCPRoute" | "UDPRoute" => {
-            let hosts: Vec<&str> = arr(v, &["spec", "hostnames"]).iter().filter_map(Value::as_str).collect();
+            let hosts: Vec<&str> = arr(v, &["spec", "hostnames"])
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
             cells.insert("hostnames".into(), json!(hosts.join(", ")));
-            let parents: Vec<&str> = arr(v, &["spec", "parentRefs"]).iter().filter_map(|p| p.get("name").and_then(Value::as_str)).collect();
+            let parents: Vec<&str> = arr(v, &["spec", "parentRefs"])
+                .iter()
+                .filter_map(|p| p.get("name").and_then(Value::as_str))
+                .collect();
             cells.insert("parents".into(), json!(parents.join(", ")));
             cells.insert("rules".into(), json!(arr(v, &["spec", "rules"]).len()));
             let accepted = arr(v, &["status", "parents"]).iter().all(|p| {
@@ -495,16 +729,47 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
                     .unwrap_or(false)
             });
             let has_status = !arr(v, &["status", "parents"]).is_empty();
-            status = if !has_status { "Pending".into() } else if accepted { "Accepted".into() } else { "Not accepted".into() };
-            health = if !has_status { Health::Pending } else if accepted { Health::Ok } else { Health::Error };
+            status = if !has_status {
+                "Pending".into()
+            } else if accepted {
+                "Accepted".into()
+            } else {
+                "Not accepted".into()
+            };
+            health = if !has_status {
+                Health::Pending
+            } else if accepted {
+                Health::Ok
+            } else {
+                Health::Error
+            };
         }
         "PersistentVolume" => {
             let phase = s(v, &["status", "phase"]).unwrap_or("Unknown");
-            cells.insert("capacity".into(), json!(s(v, &["spec", "capacity", "storage"])));
-            cells.insert("accessModes".into(), json!(arr(v, &["spec", "accessModes"]).iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")));
-            cells.insert("reclaimPolicy".into(), json!(s(v, &["spec", "persistentVolumeReclaimPolicy"])));
-            cells.insert("storageClass".into(), json!(s(v, &["spec", "storageClassName"])));
-            let claim = match (s(v, &["spec", "claimRef", "namespace"]), s(v, &["spec", "claimRef", "name"])) {
+            cells.insert(
+                "capacity".into(),
+                json!(s(v, &["spec", "capacity", "storage"])),
+            );
+            cells.insert(
+                "accessModes".into(),
+                json!(arr(v, &["spec", "accessModes"])
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")),
+            );
+            cells.insert(
+                "reclaimPolicy".into(),
+                json!(s(v, &["spec", "persistentVolumeReclaimPolicy"])),
+            );
+            cells.insert(
+                "storageClass".into(),
+                json!(s(v, &["spec", "storageClassName"])),
+            );
+            let claim = match (
+                s(v, &["spec", "claimRef", "namespace"]),
+                s(v, &["spec", "claimRef", "name"]),
+            ) {
                 (Some(ns), Some(n)) => Some(format!("{ns}/{n}")),
                 _ => None,
             };
@@ -521,9 +786,23 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
         "PersistentVolumeClaim" => {
             let phase = s(v, &["status", "phase"]).unwrap_or("Unknown");
             cells.insert("volume".into(), json!(s(v, &["spec", "volumeName"])));
-            cells.insert("capacity".into(), json!(s(v, &["status", "capacity", "storage"]).or(s(v, &["spec", "resources", "requests", "storage"]))));
-            cells.insert("accessModes".into(), json!(arr(v, &["spec", "accessModes"]).iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")));
-            cells.insert("storageClass".into(), json!(s(v, &["spec", "storageClassName"])));
+            cells.insert(
+                "capacity".into(),
+                json!(s(v, &["status", "capacity", "storage"])
+                    .or(s(v, &["spec", "resources", "requests", "storage"]))),
+            );
+            cells.insert(
+                "accessModes".into(),
+                json!(arr(v, &["spec", "accessModes"])
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")),
+            );
+            cells.insert(
+                "storageClass".into(),
+                json!(s(v, &["spec", "storageClassName"])),
+            );
             status = phase.to_string();
             health = match phase {
                 "Bound" => Health::Ok,
@@ -534,15 +813,42 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
         }
         "StorageClass" => {
             cells.insert("provisioner".into(), json!(v.get("provisioner")));
-            cells.insert("reclaimPolicy".into(), json!(v.get("reclaimPolicy").and_then(Value::as_str).unwrap_or("Delete")));
-            cells.insert("volumeBindingMode".into(), json!(v.get("volumeBindingMode").and_then(Value::as_str).unwrap_or("Immediate")));
-            cells.insert("allowExpansion".into(), json!(v.get("allowVolumeExpansion").and_then(Value::as_bool).unwrap_or(false)));
-            let default = s(v, &["metadata", "annotations", "storageclass.kubernetes.io/is-default-class"]) == Some("true");
+            cells.insert(
+                "reclaimPolicy".into(),
+                json!(v
+                    .get("reclaimPolicy")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Delete")),
+            );
+            cells.insert(
+                "volumeBindingMode".into(),
+                json!(v
+                    .get("volumeBindingMode")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Immediate")),
+            );
+            cells.insert(
+                "allowExpansion".into(),
+                json!(v
+                    .get("allowVolumeExpansion")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)),
+            );
+            let default = s(
+                v,
+                &[
+                    "metadata",
+                    "annotations",
+                    "storageclass.kubernetes.io/is-default-class",
+                ],
+            ) == Some("true");
             cells.insert("default".into(), json!(default));
         }
         "Node" => {
             let ready = condition_true(v, "Ready");
-            let unschedulable = get(v, &["spec", "unschedulable"]).and_then(Value::as_bool).unwrap_or(false);
+            let unschedulable = get(v, &["spec", "unschedulable"])
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let mut st = match ready {
                 Some(true) => "Ready".to_string(),
                 Some(false) => "NotReady".to_string(),
@@ -551,10 +857,15 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             if unschedulable {
                 st.push_str(",SchedulingDisabled");
             }
-            let pressures: Vec<&str> = ["MemoryPressure", "DiskPressure", "PIDPressure", "NetworkUnavailable"]
-                .into_iter()
-                .filter(|c| condition_true(v, c) == Some(true))
-                .collect();
+            let pressures: Vec<&str> = [
+                "MemoryPressure",
+                "DiskPressure",
+                "PIDPressure",
+                "NetworkUnavailable",
+            ]
+            .into_iter()
+            .filter(|c| condition_true(v, c) == Some(true))
+            .collect();
             health = match (ready, pressures.is_empty(), unschedulable) {
                 (Some(true), true, false) => Health::Ok,
                 (Some(true), _, _) => Health::Warning,
@@ -566,23 +877,57 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
                 .filter_map(|k| k.strip_prefix("node-role.kubernetes.io/").map(String::from))
                 .filter(|r| !r.is_empty())
                 .collect();
-            cells.insert("roles".into(), json!(if roles.is_empty() { "<none>".to_string() } else { roles.join(",") }));
-            cells.insert("version".into(), json!(s(v, &["status", "nodeInfo", "kubeletVersion"])));
+            cells.insert(
+                "roles".into(),
+                json!(if roles.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    roles.join(",")
+                }),
+            );
+            cells.insert(
+                "version".into(),
+                json!(s(v, &["status", "nodeInfo", "kubeletVersion"])),
+            );
             cells.insert("os".into(), json!(s(v, &["status", "nodeInfo", "osImage"])));
-            cells.insert("kernel".into(), json!(s(v, &["status", "nodeInfo", "kernelVersion"])));
-            cells.insert("runtime".into(), json!(s(v, &["status", "nodeInfo", "containerRuntimeVersion"])));
-            cells.insert("arch".into(), json!(s(v, &["status", "nodeInfo", "architecture"])));
+            cells.insert(
+                "kernel".into(),
+                json!(s(v, &["status", "nodeInfo", "kernelVersion"])),
+            );
+            cells.insert(
+                "runtime".into(),
+                json!(s(v, &["status", "nodeInfo", "containerRuntimeVersion"])),
+            );
+            cells.insert(
+                "arch".into(),
+                json!(s(v, &["status", "nodeInfo", "architecture"])),
+            );
             let internal_ip = arr(v, &["status", "addresses"])
                 .iter()
                 .find(|a| a.get("type").and_then(Value::as_str) == Some("InternalIP"))
                 .and_then(|a| a.get("address"))
                 .and_then(Value::as_str);
             cells.insert("internalIP".into(), json!(internal_ip));
-            cells.insert("cpuCapacityMillis".into(), json!(s(v, &["status", "capacity", "cpu"]).and_then(quantity::cpu_millis)));
-            cells.insert("memoryCapacityBytes".into(), json!(s(v, &["status", "capacity", "memory"]).and_then(quantity::bytes)));
-            cells.insert("cpuAllocatableMillis".into(), json!(s(v, &["status", "allocatable", "cpu"]).and_then(quantity::cpu_millis)));
-            cells.insert("memoryAllocatableBytes".into(), json!(s(v, &["status", "allocatable", "memory"]).and_then(quantity::bytes)));
-            cells.insert("podsCapacity".into(), json!(s(v, &["status", "capacity", "pods"])));
+            cells.insert(
+                "cpuCapacityMillis".into(),
+                json!(s(v, &["status", "capacity", "cpu"]).and_then(quantity::cpu_millis)),
+            );
+            cells.insert(
+                "memoryCapacityBytes".into(),
+                json!(s(v, &["status", "capacity", "memory"]).and_then(quantity::bytes)),
+            );
+            cells.insert(
+                "cpuAllocatableMillis".into(),
+                json!(s(v, &["status", "allocatable", "cpu"]).and_then(quantity::cpu_millis)),
+            );
+            cells.insert(
+                "memoryAllocatableBytes".into(),
+                json!(s(v, &["status", "allocatable", "memory"]).and_then(quantity::bytes)),
+            );
+            cells.insert(
+                "podsCapacity".into(),
+                json!(s(v, &["status", "capacity", "pods"])),
+            );
             cells.insert("taints".into(), json!(arr(v, &["spec", "taints"]).len()));
             cells.insert("unschedulable".into(), json!(unschedulable));
             cells.insert("pressures".into(), json!(pressures));
@@ -590,11 +935,19 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
         "Namespace" => {
             let phase = s(v, &["status", "phase"]).unwrap_or("Active");
             status = phase.to_string();
-            health = if phase == "Active" { Health::Ok } else { Health::Pending };
+            health = if phase == "Active" {
+                Health::Ok
+            } else {
+                Health::Pending
+            };
         }
         "Event" => {
             let ty = v.get("type").and_then(Value::as_str).unwrap_or("Normal");
-            let count = v.get("count").and_then(Value::as_i64).or_else(|| get(v, &["series", "count"]).and_then(Value::as_i64)).unwrap_or(1);
+            let count = v
+                .get("count")
+                .and_then(Value::as_i64)
+                .or_else(|| get(v, &["series", "count"]).and_then(Value::as_i64))
+                .unwrap_or(1);
             let last = v
                 .get("lastTimestamp")
                 .and_then(Value::as_str)
@@ -606,43 +959,119 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             cells.insert("message".into(), json!(v.get("message")));
             cells.insert("count".into(), json!(count));
             cells.insert("lastSeen".into(), json!(last));
-            cells.insert("objectKind".into(), json!(s(v, &["involvedObject", "kind"])));
-            cells.insert("objectName".into(), json!(s(v, &["involvedObject", "name"])));
-            cells.insert("objectNamespace".into(), json!(s(v, &["involvedObject", "namespace"])));
-            cells.insert("source".into(), json!(s(v, &["source", "component"]).or(v.get("reportingComponent").and_then(Value::as_str))));
+            cells.insert(
+                "objectKind".into(),
+                json!(s(v, &["involvedObject", "kind"])),
+            );
+            cells.insert(
+                "objectName".into(),
+                json!(s(v, &["involvedObject", "name"])),
+            );
+            cells.insert(
+                "objectNamespace".into(),
+                json!(s(v, &["involvedObject", "namespace"])),
+            );
+            cells.insert(
+                "source".into(),
+                json!(s(v, &["source", "component"])
+                    .or(v.get("reportingComponent").and_then(Value::as_str))),
+            );
             status = ty.to_string();
-            health = if ty == "Warning" { Health::Warning } else { Health::Neutral };
+            health = if ty == "Warning" {
+                Health::Warning
+            } else {
+                Health::Neutral
+            };
         }
         "ConfigMap" => {
-            let n = v.get("data").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0)
-                + v.get("binaryData").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0);
+            let n = v
+                .get("data")
+                .and_then(Value::as_object)
+                .map(|m| m.len())
+                .unwrap_or(0)
+                + v.get("binaryData")
+                    .and_then(Value::as_object)
+                    .map(|m| m.len())
+                    .unwrap_or(0);
             cells.insert("keys".into(), json!(n));
         }
         "Secret" => {
             // never include secret values in rows
             cells.insert("type".into(), json!(v.get("type")));
-            cells.insert("keys".into(), json!(v.get("data").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0)));
+            cells.insert(
+                "keys".into(),
+                json!(v
+                    .get("data")
+                    .and_then(Value::as_object)
+                    .map(|m| m.len())
+                    .unwrap_or(0)),
+            );
         }
         "ServiceAccount" => {
-            cells.insert("secrets".into(), json!(v.get("secrets").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0)));
+            cells.insert(
+                "secrets".into(),
+                json!(v
+                    .get("secrets")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0)),
+            );
         }
         "Role" | "ClusterRole" => {
-            cells.insert("rules".into(), json!(v.get("rules").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0)));
-            cells.insert("aggregated".into(), json!(v.get("aggregationRule").is_some()));
+            cells.insert(
+                "rules".into(),
+                json!(v
+                    .get("rules")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0)),
+            );
+            cells.insert(
+                "aggregated".into(),
+                json!(v.get("aggregationRule").is_some()),
+            );
         }
         "RoleBinding" | "ClusterRoleBinding" => {
-            cells.insert("role".into(), json!(format!("{}/{}", s(v, &["roleRef", "kind"]).unwrap_or(""), s(v, &["roleRef", "name"]).unwrap_or(""))));
+            cells.insert(
+                "role".into(),
+                json!(format!(
+                    "{}/{}",
+                    s(v, &["roleRef", "kind"]).unwrap_or(""),
+                    s(v, &["roleRef", "name"]).unwrap_or("")
+                )),
+            );
             let subjects: Vec<String> = arr(v, &["subjects"])
                 .iter()
-                .map(|s| format!("{}:{}", s.get("kind").and_then(Value::as_str).unwrap_or(""), s.get("name").and_then(Value::as_str).unwrap_or("")))
+                .map(|s| {
+                    format!(
+                        "{}:{}",
+                        s.get("kind").and_then(Value::as_str).unwrap_or(""),
+                        s.get("name").and_then(Value::as_str).unwrap_or("")
+                    )
+                })
                 .collect();
             cells.insert("subjects".into(), json!(subjects.join(", ")));
         }
         "HorizontalPodAutoscaler" => {
-            cells.insert("reference".into(), json!(format!("{}/{}", s(v, &["spec", "scaleTargetRef", "kind"]).unwrap_or(""), s(v, &["spec", "scaleTargetRef", "name"]).unwrap_or(""))));
-            cells.insert("minReplicas".into(), json!(get(v, &["spec", "minReplicas"]).and_then(Value::as_i64).unwrap_or(1)));
+            cells.insert(
+                "reference".into(),
+                json!(format!(
+                    "{}/{}",
+                    s(v, &["spec", "scaleTargetRef", "kind"]).unwrap_or(""),
+                    s(v, &["spec", "scaleTargetRef", "name"]).unwrap_or("")
+                )),
+            );
+            cells.insert(
+                "minReplicas".into(),
+                json!(get(v, &["spec", "minReplicas"])
+                    .and_then(Value::as_i64)
+                    .unwrap_or(1)),
+            );
             cells.insert("maxReplicas".into(), json!(i(v, &["spec", "maxReplicas"])));
-            cells.insert("replicas".into(), json!(i(v, &["status", "currentReplicas"])));
+            cells.insert(
+                "replicas".into(),
+                json!(i(v, &["status", "currentReplicas"])),
+            );
             if condition_true(v, "ScalingActive") == Some(false) {
                 health = Health::Warning;
                 status = "Scaling inactive".into();
@@ -652,27 +1081,51 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
             }
         }
         "PodDisruptionBudget" => {
-            cells.insert("minAvailable".into(), json!(get(v, &["spec", "minAvailable"])));
-            cells.insert("maxUnavailable".into(), json!(get(v, &["spec", "maxUnavailable"])));
+            cells.insert(
+                "minAvailable".into(),
+                json!(get(v, &["spec", "minAvailable"])),
+            );
+            cells.insert(
+                "maxUnavailable".into(),
+                json!(get(v, &["spec", "maxUnavailable"])),
+            );
             let allowed = i(v, &["status", "disruptionsAllowed"]);
             cells.insert("allowedDisruptions".into(), json!(allowed));
-            health = if allowed > 0 { Health::Ok } else { Health::Warning };
+            health = if allowed > 0 {
+                Health::Ok
+            } else {
+                Health::Warning
+            };
         }
         "EndpointSlice" => {
             cells.insert("addressType".into(), json!(v.get("addressType")));
-            cells.insert("endpoints".into(), json!(v.get("endpoints").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0)));
+            cells.insert(
+                "endpoints".into(),
+                json!(v
+                    .get("endpoints")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0)),
+            );
         }
         "CustomResourceDefinition" => {
             cells.insert("group".into(), json!(s(v, &["spec", "group"])));
             cells.insert("scope".into(), json!(s(v, &["spec", "scope"])));
             cells.insert("kindName".into(), json!(s(v, &["spec", "names", "kind"])));
-            let versions: Vec<&str> = arr(v, &["spec", "versions"]).iter().filter_map(|x| x.get("name").and_then(Value::as_str)).collect();
+            let versions: Vec<&str> = arr(v, &["spec", "versions"])
+                .iter()
+                .filter_map(|x| x.get("name").and_then(Value::as_str))
+                .collect();
             cells.insert("versions".into(), json!(versions.join(", ")));
         }
         _ => {
             // Generic: surface Ready condition if present (common for CRDs).
             if let Some(ready) = condition_true(v, "Ready") {
-                status = if ready { "Ready".into() } else { "NotReady".into() };
+                status = if ready {
+                    "Ready".into()
+                } else {
+                    "NotReady".into()
+                };
                 health = if ready { Health::Ok } else { Health::Warning };
             } else if let Some(phase) = s(v, &["status", "phase"]) {
                 status = phase.to_string();
@@ -684,8 +1137,14 @@ pub fn summarize(kind: &str, v: &Value) -> Row {
         uid,
         name,
         namespace,
-        created: meta.get("creationTimestamp").and_then(Value::as_str).map(String::from),
-        resource_version: meta.get("resourceVersion").and_then(Value::as_str).map(String::from),
+        created: meta
+            .get("creationTimestamp")
+            .and_then(Value::as_str)
+            .map(String::from),
+        resource_version: meta
+            .get("resourceVersion")
+            .and_then(Value::as_str)
+            .map(String::from),
         labels,
         health,
         status,

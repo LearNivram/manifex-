@@ -38,7 +38,12 @@ impl AppState {
 
     /// Runs a mutating operation and records it in the local audit log together
     /// with its outcome.
-    pub async fn audited<T, F>(&self, cluster_id: &str, target: AuditTarget<'_>, fut: F) -> AppResult<T>
+    pub async fn audited<T, F>(
+        &self,
+        cluster_id: &str,
+        target: AuditTarget<'_>,
+        fut: F,
+    ) -> AppResult<T>
     where
         F: Future<Output = AppResult<T>>,
     {
@@ -75,10 +80,18 @@ impl AppState {
 
     /// Defence in depth for destructive operations on production clusters: the UI
     /// asks the user to type the object name, and the backend verifies it.
-    pub fn check_production_confirmation(&self, cluster_id: &str, expected: &str, confirm: Option<&str>) -> AppResult<()> {
+    pub fn check_production_confirmation(
+        &self,
+        cluster_id: &str,
+        expected: &str,
+        confirm: Option<&str>,
+    ) -> AppResult<()> {
         let profile = self.db.get_cluster(cluster_id)?;
         let settings = self.db.load_settings()?;
-        if profile.environment == "production" && settings.strict_production_confirmations && confirm != Some(expected) {
+        if profile.environment == "production"
+            && settings.strict_production_confirmations
+            && confirm != Some(expected)
+        {
             return Err(AppError::Security(format!(
                 "'{}' is a production cluster – type '{expected}' to confirm this operation",
                 profile.name

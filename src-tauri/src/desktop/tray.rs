@@ -24,7 +24,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     if let Some(state) = app.try_state::<AppState>() {
         let profiles = state.db.list_clusters().unwrap_or_default();
         if profiles.is_empty() {
-            clusters.append(&MenuItem::with_id(app, "tray:none", "No clusters configured", false, None::<&str>)?)?;
+            clusters.append(&MenuItem::with_id(
+                app,
+                "tray:none",
+                "No clusters configured",
+                false,
+                None::<&str>,
+            )?)?;
         }
         for p in profiles.iter().take(30) {
             let marker = match state.clusters.status(&p.id).map(|s| s.state) {
@@ -34,13 +40,26 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 _ => "○",
             };
             let label = format!("{marker}  {}", p.name);
-            clusters.append(&MenuItem::with_id(app, format!("tray:cluster:{}", p.id), label, true, None::<&str>)?)?;
+            clusters.append(&MenuItem::with_id(
+                app,
+                format!("tray:cluster:{}", p.id),
+                label,
+                true,
+                None::<&str>,
+            )?)?;
         }
     }
     let quit = MenuItem::with_id(app, "tray:quit", "Quit Manifex", true, None::<&str>)?;
     Menu::with_items(
         app,
-        &[&show, &palette, &PredefinedMenuItem::separator(app)?, &clusters, &PredefinedMenuItem::separator(app)?, &quit],
+        &[
+            &show,
+            &palette,
+            &PredefinedMenuItem::separator(app)?,
+            &clusters,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
     )
 }
 
@@ -71,7 +90,12 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 show_main(tray.app_handle());
             }
         })
@@ -89,7 +113,8 @@ pub fn refresh(app: &AppHandle) {
             }
             if let Some(state) = app2.try_state::<AppState>() {
                 let connected = state.clusters.connected_ids().len();
-                let _ = tray.set_tooltip(Some(format!("Manifex – {connected} cluster(s) connected")));
+                let _ =
+                    tray.set_tooltip(Some(format!("Manifex – {connected} cluster(s) connected")));
             }
         }
     });

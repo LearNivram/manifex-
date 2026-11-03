@@ -55,16 +55,24 @@ fn metrics_api(client: Client, plural: &str, kind: &str, ns: Option<&str>) -> Ap
 }
 
 fn usage(v: &Value) -> (f64, f64) {
-    let cpu = v.pointer("/usage/cpu").and_then(Value::as_str).and_then(quantity::cpu_millis).unwrap_or(0.0);
-    let mem = v.pointer("/usage/memory").and_then(Value::as_str).and_then(quantity::bytes).unwrap_or(0.0);
+    let cpu = v
+        .pointer("/usage/cpu")
+        .and_then(Value::as_str)
+        .and_then(quantity::cpu_millis)
+        .unwrap_or(0.0);
+    let mem = v
+        .pointer("/usage/memory")
+        .and_then(Value::as_str)
+        .and_then(quantity::bytes)
+        .unwrap_or(0.0);
     (cpu, mem)
 }
 
 fn map_metrics_err(e: kube::Error) -> AppError {
     match &e {
-        kube::Error::Api(s) if s.code == 404 || s.code == 503 => {
-            AppError::NotFound("metrics API (metrics-server) is not available in this cluster".into())
-        }
+        kube::Error::Api(s) if s.code == 404 || s.code == 503 => AppError::NotFound(
+            "metrics API (metrics-server) is not available in this cluster".into(),
+        ),
         _ => e.into(),
     }
 }
@@ -84,7 +92,11 @@ pub async fn node_metrics(client: Client) -> AppResult<Vec<NodeMetric>> {
                 name: o.metadata.name.unwrap_or_default(),
                 cpu_millis: cpu,
                 memory_bytes: mem,
-                timestamp: o.data.get("timestamp").and_then(Value::as_str).map(String::from),
+                timestamp: o
+                    .data
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(String::from),
             }
         })
         .collect())
@@ -123,7 +135,11 @@ pub async fn pod_metrics(client: Client, namespace: Option<&str>) -> AppResult<V
                 cpu_millis: containers.iter().map(|c| c.cpu_millis).sum(),
                 memory_bytes: containers.iter().map(|c| c.memory_bytes).sum(),
                 containers,
-                timestamp: o.data.get("timestamp").and_then(Value::as_str).map(String::from),
+                timestamp: o
+                    .data
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(String::from),
             }
         })
         .collect())
@@ -161,12 +177,32 @@ pub struct ClusterCapacity {
     pub metrics_available: bool,
 }
 
-fn qty_cpu(m: Option<&std::collections::BTreeMap<String, k8s_openapi::apimachinery::pkg::api::resource::Quantity>>, key: &str) -> f64 {
-    m.and_then(|m| m.get(key)).and_then(|q| quantity::cpu_millis(&q.0)).unwrap_or(0.0)
+fn qty_cpu(
+    m: Option<
+        &std::collections::BTreeMap<
+            String,
+            k8s_openapi::apimachinery::pkg::api::resource::Quantity,
+        >,
+    >,
+    key: &str,
+) -> f64 {
+    m.and_then(|m| m.get(key))
+        .and_then(|q| quantity::cpu_millis(&q.0))
+        .unwrap_or(0.0)
 }
 
-fn qty_bytes(m: Option<&std::collections::BTreeMap<String, k8s_openapi::apimachinery::pkg::api::resource::Quantity>>, key: &str) -> f64 {
-    m.and_then(|m| m.get(key)).and_then(|q| quantity::bytes(&q.0)).unwrap_or(0.0)
+fn qty_bytes(
+    m: Option<
+        &std::collections::BTreeMap<
+            String,
+            k8s_openapi::apimachinery::pkg::api::resource::Quantity,
+        >,
+    >,
+    key: &str,
+) -> f64 {
+    m.and_then(|m| m.get(key))
+        .and_then(|q| quantity::bytes(&q.0))
+        .unwrap_or(0.0)
 }
 
 /// Capacity, requests, limits and (if metrics-server is installed) live usage per node.
@@ -183,8 +219,10 @@ pub async fn cluster_capacity(client: Client) -> AppResult<ClusterCapacity> {
     let node_list = node_list.map_err(|_| AppError::Connection("node list timed out".into()))??;
     let pod_list = pod_list.map_err(|_| AppError::Connection("pod list timed out".into()))??;
     let metrics_available = metrics.is_ok();
-    let metrics: HashMap<String, NodeMetric> =
-        metrics.as_ref().map(|m| m.iter().map(|n| (n.name.clone(), n.clone())).collect()).unwrap_or_default();
+    let metrics: HashMap<String, NodeMetric> = metrics
+        .as_ref()
+        .map(|m| m.iter().map(|n| (n.name.clone(), n.clone())).collect())
+        .unwrap_or_default();
 
     let mut per_node: HashMap<String, NodeCapacity> = HashMap::new();
     for n in &node_list.items {
@@ -215,13 +253,20 @@ pub async fn cluster_capacity(client: Client) -> AppResult<ClusterCapacity> {
                     ..Default::default()
                 },
                 pods: 0,
-                pod_capacity: cap.and_then(|c| c.get("pods")).and_then(|q| q.0.parse().ok()).unwrap_or(0),
+                pod_capacity: cap
+                    .and_then(|c| c.get("pods"))
+                    .and_then(|q| q.0.parse().ok())
+                    .unwrap_or(0),
             },
         );
     }
     for p in &pod_list.items {
-        let Some(node) = p.spec.as_ref().and_then(|s| s.node_name.clone()) else { continue };
-        let Some(entry) = per_node.get_mut(&node) else { continue };
+        let Some(node) = p.spec.as_ref().and_then(|s| s.node_name.clone()) else {
+            continue;
+        };
+        let Some(entry) = per_node.get_mut(&node) else {
+            continue;
+        };
         entry.pods += 1;
         if let Some(spec) = &p.spec {
             for c in &spec.containers {
@@ -233,7 +278,10 @@ pub async fn cluster_capacity(client: Client) -> AppResult<ClusterCapacity> {
             }
         }
     }
-    let mut out = ClusterCapacity { metrics_available, ..Default::default() };
+    let mut out = ClusterCapacity {
+        metrics_available,
+        ..Default::default()
+    };
     let mut nodes: Vec<NodeCapacity> = per_node.into_values().collect();
     nodes.sort_by(|a, b| a.name.cmp(&b.name));
     let mut cpu_usage = 0.0;

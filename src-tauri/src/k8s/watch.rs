@@ -37,9 +37,18 @@ pub struct WatchKey {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum WatchMessage {
-    Snapshot { rows: Vec<Row>, ready: bool },
-    Batch { upserts: Vec<Row>, deletes: Vec<String> },
-    Error { message: String, status: Option<u16> },
+    Snapshot {
+        rows: Vec<Row>,
+        ready: bool,
+    },
+    Batch {
+        upserts: Vec<Row>,
+        deletes: Vec<String>,
+    },
+    Error {
+        message: String,
+        status: Option<u16>,
+    },
     Closed,
 }
 
@@ -159,7 +168,11 @@ impl WatchManager {
         }
         let (tx, _) = broadcast::channel(4096);
         let sw = Arc::new(SharedWatch {
-            state: Mutex::new(State { rows: HashMap::new(), ready: false, last_error: None }),
+            state: Mutex::new(State {
+                rows: HashMap::new(),
+                ready: false,
+                last_error: None,
+            }),
             tx,
             task: Mutex::new(None),
             subscribers: AtomicUsize::new(0),
@@ -226,10 +239,19 @@ impl WatchManager {
     }
 
     /// Starts a subscription. Returns the subscription id.
-    pub fn subscribe(&self, client: Client, key: WatchKey, sink: impl WatchSink) -> AppResult<String> {
+    pub fn subscribe(
+        &self,
+        client: Client,
+        key: WatchKey,
+        sink: impl WatchSink,
+    ) -> AppResult<String> {
         let sw = self.get_or_start(client, &key);
         sw.subscribers.fetch_add(1, Ordering::SeqCst);
-        let guard = SubscriberGuard { shared: sw.clone(), key: key.clone(), mgr: self.self_ref.lock().clone() };
+        let guard = SubscriberGuard {
+            shared: sw.clone(),
+            key: key.clone(),
+            mgr: self.self_ref.lock().clone(),
+        };
         let sub_id = uuid::Uuid::new_v4().to_string();
 
         let task = tokio::spawn(async move {
@@ -238,7 +260,10 @@ impl WatchManager {
             let snapshot = |sw: &SharedWatch| -> (WatchMessage, Option<(String, Option<u16>)>) {
                 let st = sw.state.lock();
                 (
-                    WatchMessage::Snapshot { rows: st.rows.values().cloned().collect(), ready: st.ready },
+                    WatchMessage::Snapshot {
+                        rows: st.rows.values().cloned().collect(),
+                        ready: st.ready,
+                    },
                     st.last_error.clone(),
                 )
             };
@@ -294,7 +319,13 @@ impl WatchManager {
                 }
             }
         });
-        self.subs.lock().insert(sub_id.clone(), Subscription { key, task: task.abort_handle() });
+        self.subs.lock().insert(
+            sub_id.clone(),
+            Subscription {
+                key,
+                task: task.abort_handle(),
+            },
+        );
         Ok(sub_id)
     }
 

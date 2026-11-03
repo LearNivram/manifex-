@@ -38,13 +38,23 @@ fn search_kinds() -> Vec<ResourceRef> {
         builtin::namespaces(),
         builtin::nodes(),
         ResourceRef::new("", "v1", "Secret", "secrets", true),
-        ResourceRef::new("", "v1", "PersistentVolumeClaim", "persistentvolumeclaims", true),
+        ResourceRef::new(
+            "",
+            "v1",
+            "PersistentVolumeClaim",
+            "persistentvolumeclaims",
+            true,
+        ),
     ]
 }
 
 /// Searches object names across all connected clusters using metadata-only list
 /// requests (much cheaper than full objects).
-pub async fn global_search(mgr: &Arc<ClusterManager>, query: &str, limit: usize) -> AppResult<Vec<SearchHit>> {
+pub async fn global_search(
+    mgr: &Arc<ClusterManager>,
+    query: &str,
+    limit: usize,
+) -> AppResult<Vec<SearchHit>> {
     let q = query.trim().to_lowercase();
     if q.len() < 2 {
         return Ok(vec![]);
@@ -62,8 +72,14 @@ pub async fn global_search(mgr: &Arc<ClusterManager>, query: &str, limit: usize)
             let q = q.clone();
             tasks.push(async move {
                 let api = res.api(client, None);
-                let list = tokio::time::timeout(Duration::from_secs(10), api.list_metadata(&ListParams::default())).await;
-                let Ok(Ok(list)) = list else { return Vec::new() };
+                let list = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    api.list_metadata(&ListParams::default()),
+                )
+                .await;
+                let Ok(Ok(list)) = list else {
+                    return Vec::new();
+                };
                 list.items
                     .into_iter()
                     .filter_map(|o| {
@@ -83,11 +99,24 @@ pub async fn global_search(mgr: &Arc<ClusterManager>, query: &str, limit: usize)
             });
         }
     }
-    let mut hits: Vec<SearchHit> = futures::future::join_all(tasks).await.into_iter().flatten().collect();
+    let mut hits: Vec<SearchHit> = futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
     // exact / prefix matches first
     hits.sort_by_key(|h| {
         let n = h.name.to_lowercase();
-        (if n == q { 0 } else if n.starts_with(&q) { 1 } else { 2 }, n.len())
+        (
+            if n == q {
+                0
+            } else if n.starts_with(&q) {
+                1
+            } else {
+                2
+            },
+            n.len(),
+        )
     });
     hits.truncate(limit.clamp(1, 500));
     Ok(hits)
@@ -139,27 +168,46 @@ pub struct ClusterComparison {
 async fn list_values(client: Client, res: &ResourceRef, ns: Option<&str>) -> Vec<Value> {
     let api = res.api(client, ns);
     match tokio::time::timeout(Duration::from_secs(30), api.list(&ListParams::default())).await {
-        Ok(Ok(list)) => list.items.into_iter().filter_map(|o| serde_json::to_value(o).ok()).collect(),
+        Ok(Ok(list)) => list
+            .items
+            .into_iter()
+            .filter_map(|o| serde_json::to_value(o).ok())
+            .collect(),
         _ => vec![],
     }
 }
 
-async fn facts(mgr: &Arc<ClusterManager>, id: &str, namespace: Option<&str>) -> AppResult<(ClusterFacts, BTreeMap<(String, String, String), WorkloadFacts>)> {
+async fn facts(
+    mgr: &Arc<ClusterManager>,
+    id: &str,
+    namespace: Option<&str>,
+) -> AppResult<(
+    ClusterFacts,
+    BTreeMap<(String, String, String), WorkloadFacts>,
+)> {
     let conn = mgr.get(id)?;
     let client = conn.client.clone();
-    let (r_nodes, r_ns, r_dep, r_sts, r_ds) =
-        (builtin::nodes(), builtin::namespaces(), builtin::deployments(), builtin::statefulsets(), builtin::daemonsets());
+    let (r_nodes, r_ns, r_dep, r_sts, r_ds) = (
+        builtin::nodes(),
+        builtin::namespaces(),
+        builtin::deployments(),
+        builtin::statefulsets(),
+        builtin::daemonsets(),
+    );
     let (nodes, nss, pods, deps, sts, dss) = tokio::join!(
         list_values(client.clone(), &r_nodes, None),
         list_values(client.clone(), &r_ns, None),
         async {
             let api = builtin::pods().api(client.clone(), namespace);
-            tokio::time::timeout(Duration::from_secs(30), api.list_metadata(&ListParams::default()))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .map(|l| l.items.len())
-                .unwrap_or(0)
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                api.list_metadata(&ListParams::default()),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .map(|l| l.items.len())
+            .unwrap_or(0)
         },
         list_values(client.clone(), &r_dep, namespace),
         list_values(client.clone(), &r_sts, namespace),
@@ -171,28 +219,66 @@ async fn facts(mgr: &Arc<ClusterManager>, id: &str, namespace: Option<&str>) -> 
         name: conn.name(),
         version: conn.status().version,
         nodes: node_rows.len(),
-        ready_nodes: node_rows.iter().filter(|r| r.status.starts_with("Ready")).count(),
-        cpu_millis: node_rows.iter().filter_map(|r| r.cells.get("cpuCapacityMillis").and_then(Value::as_f64)).sum(),
-        memory_bytes: node_rows.iter().filter_map(|r| r.cells.get("memoryCapacityBytes").and_then(Value::as_f64)).sum(),
-        namespaces: nss.iter().filter_map(|n| n.pointer("/metadata/name").and_then(Value::as_str).map(String::from)).collect(),
+        ready_nodes: node_rows
+            .iter()
+            .filter(|r| r.status.starts_with("Ready"))
+            .count(),
+        cpu_millis: node_rows
+            .iter()
+            .filter_map(|r| r.cells.get("cpuCapacityMillis").and_then(Value::as_f64))
+            .sum(),
+        memory_bytes: node_rows
+            .iter()
+            .filter_map(|r| r.cells.get("memoryCapacityBytes").and_then(Value::as_f64))
+            .sum(),
+        namespaces: nss
+            .iter()
+            .filter_map(|n| {
+                n.pointer("/metadata/name")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            })
+            .collect(),
         pods,
     };
     f.namespaces.sort();
     let mut workloads = BTreeMap::new();
-    for (kind, items) in [("Deployment", deps), ("StatefulSet", sts), ("DaemonSet", dss)] {
+    for (kind, items) in [
+        ("Deployment", deps),
+        ("StatefulSet", sts),
+        ("DaemonSet", dss),
+    ] {
         for item in items {
             let row = summarize(kind, &item);
             let images = row
                 .cells
                 .get("images")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             workloads.insert(
-                (row.namespace.clone().unwrap_or_default(), row.name.clone(), kind.to_string()),
+                (
+                    row.namespace.clone().unwrap_or_default(),
+                    row.name.clone(),
+                    kind.to_string(),
+                ),
                 WorkloadFacts {
-                    replicas: row.cells.get("replicas").or(row.cells.get("desired")).and_then(Value::as_i64).unwrap_or(0),
-                    ready: row.cells.get("ready").and_then(Value::as_str).unwrap_or("").into(),
+                    replicas: row
+                        .cells
+                        .get("replicas")
+                        .or(row.cells.get("desired"))
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                    ready: row
+                        .cells
+                        .get("ready")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
                     images,
                 },
             );
@@ -201,7 +287,12 @@ async fn facts(mgr: &Arc<ClusterManager>, id: &str, namespace: Option<&str>) -> 
     Ok((f, workloads))
 }
 
-pub async fn compare_clusters(mgr: &Arc<ClusterManager>, left: &str, right: &str, namespace: Option<&str>) -> AppResult<ClusterComparison> {
+pub async fn compare_clusters(
+    mgr: &Arc<ClusterManager>,
+    left: &str,
+    right: &str,
+    namespace: Option<&str>,
+) -> AppResult<ClusterComparison> {
     let (l, r) = tokio::join!(facts(mgr, left, namespace), facts(mgr, right, namespace));
     let (lf, lw) = l?;
     let (rf, rw) = r?;
@@ -217,7 +308,14 @@ pub async fn compare_clusters(mgr: &Arc<ClusterManager>, left: &str, right: &str
                 (Some(a), Some(b)) => a.images != b.images || a.replicas != b.replicas,
                 _ => true,
             };
-            WorkloadDiff { namespace: k.0, name: k.1, kind: k.2, left: a, right: b, differs }
+            WorkloadDiff {
+                namespace: k.0,
+                name: k.1,
+                kind: k.2,
+                left: a,
+                right: b,
+                differs,
+            }
         })
         .collect();
     Ok(ClusterComparison {
@@ -259,7 +357,10 @@ fn label<'a>(labels: &'a serde_json::Map<String, Value>, k: &str) -> Option<&'a 
 
 /// Groups workloads and their exposing resources into logical applications using
 /// the recommended `app.kubernetes.io/*` labels (falling back to `app`).
-pub async fn list_applications(client: Client, namespace: Option<&str>) -> AppResult<Vec<Application>> {
+pub async fn list_applications(
+    client: Client,
+    namespace: Option<&str>,
+) -> AppResult<Vec<Application>> {
     let kinds = [
         ("Deployment", builtin::deployments()),
         ("StatefulSet", builtin::statefulsets()),
@@ -268,7 +369,12 @@ pub async fn list_applications(client: Client, namespace: Option<&str>) -> AppRe
         ("Service", builtin::services()),
         ("Ingress", builtin::ingresses()),
     ];
-    let lists = futures::future::join_all(kinds.iter().map(|(_, r)| list_values(client.clone(), r, namespace))).await;
+    let lists = futures::future::join_all(
+        kinds
+            .iter()
+            .map(|(_, r)| list_values(client.clone(), r, namespace)),
+    )
+    .await;
     let mut apps: HashMap<(String, String), Application> = HashMap::new();
     for ((kind, _), items) in kinds.iter().zip(lists) {
         for item in items {
@@ -285,21 +391,24 @@ pub async fn list_applications(client: Client, namespace: Option<&str>) -> AppRe
             } else {
                 continue;
             };
-            let entry = apps.entry((ns.clone(), key.clone())).or_insert_with(|| Application {
-                name: key.clone(),
-                namespace: ns.clone(),
-                source: source.into(),
-                version: None,
-                managed_by: None,
-                part_of: None,
-                health: Health::Neutral,
-                components: vec![],
-            });
+            let entry = apps
+                .entry((ns.clone(), key.clone()))
+                .or_insert_with(|| Application {
+                    name: key.clone(),
+                    namespace: ns.clone(),
+                    source: source.into(),
+                    version: None,
+                    managed_by: None,
+                    part_of: None,
+                    health: Health::Neutral,
+                    components: vec![],
+                });
             if entry.version.is_none() {
                 entry.version = label(&row.labels, "app.kubernetes.io/version").map(String::from);
             }
             if entry.managed_by.is_none() {
-                entry.managed_by = label(&row.labels, "app.kubernetes.io/managed-by").map(String::from);
+                entry.managed_by =
+                    label(&row.labels, "app.kubernetes.io/managed-by").map(String::from);
             }
             if entry.part_of.is_none() {
                 entry.part_of = label(&row.labels, "app.kubernetes.io/part-of").map(String::from);
@@ -315,7 +424,11 @@ pub async fn list_applications(client: Client, namespace: Option<&str>) -> AppRe
     }
     let mut out: Vec<Application> = apps
         .into_values()
-        .filter(|a| a.components.iter().any(|c| !matches!(c.kind.as_str(), "Service" | "Ingress")))
+        .filter(|a| {
+            a.components
+                .iter()
+                .any(|c| !matches!(c.kind.as_str(), "Service" | "Ingress"))
+        })
         .map(|mut a| {
             let hs: Vec<Health> = a.components.iter().map(|c| c.health).collect();
             a.health = if hs.contains(&Health::Error) {
@@ -329,7 +442,8 @@ pub async fn list_applications(client: Client, namespace: Option<&str>) -> AppRe
             } else {
                 Health::Neutral
             };
-            a.components.sort_by(|x, y| x.kind.cmp(&y.kind).then(x.name.cmp(&y.name)));
+            a.components
+                .sort_by(|x, y| x.kind.cmp(&y.kind).then(x.name.cmp(&y.name)));
             a
         })
         .collect();

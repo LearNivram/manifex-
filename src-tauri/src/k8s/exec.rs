@@ -19,8 +19,13 @@ use crate::security::validate;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ExecEvent {
-    Exit { code: Option<i32>, message: Option<String> },
-    Error { message: String },
+    Exit {
+        code: Option<i32>,
+        message: Option<String>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 enum Input {
@@ -67,11 +72,20 @@ impl ExecManager {
         }
         let api: Api<Pod> = Api::namespaced(client, target.namespace);
         let mut attached = api.exec(target.pod, command, &ap).await?;
-        let mut stdin = attached.stdin().ok_or_else(|| AppError::internal("exec stdin unavailable"))?;
-        let mut stdout = attached.stdout().ok_or_else(|| AppError::internal("exec stdout unavailable"))?;
+        let mut stdin = attached
+            .stdin()
+            .ok_or_else(|| AppError::internal("exec stdin unavailable"))?;
+        let mut stdout = attached
+            .stdout()
+            .ok_or_else(|| AppError::internal("exec stdout unavailable"))?;
         let mut resize = attached.terminal_size();
         if let Some(r) = resize.as_mut() {
-            let _ = r.send(TerminalSize { width: target.cols.max(10), height: target.rows.max(2) }).await;
+            let _ = r
+                .send(TerminalSize {
+                    width: target.cols.max(10),
+                    height: target.rows.max(2),
+                })
+                .await;
         }
         let status = attached.take_status();
 
@@ -115,7 +129,9 @@ impl ExecManager {
             let mut code = None;
             let mut message = None;
             if let Some(status) = status {
-                if let Ok(Some(st)) = tokio::time::timeout(std::time::Duration::from_secs(2), status).await {
+                if let Ok(Some(st)) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), status).await
+                {
                     if st.status.as_deref() == Some("Success") {
                         code = Some(0);
                     } else {
@@ -124,7 +140,9 @@ impl ExecManager {
                             .details
                             .as_ref()
                             .and_then(|d| d.causes.as_ref())
-                            .and_then(|c| c.iter().find(|c| c.reason.as_deref() == Some("ExitCode")))
+                            .and_then(|c| {
+                                c.iter().find(|c| c.reason.as_deref() == Some("ExitCode"))
+                            })
                             .and_then(|c| c.message.as_ref())
                             .and_then(|m| m.parse().ok());
                     }
@@ -138,7 +156,11 @@ impl ExecManager {
         });
         self.sessions.lock().insert(
             id.clone(),
-            Session { tx, task: task.abort_handle(), cluster_id: target.cluster_id.to_string() },
+            Session {
+                tx,
+                task: task.abort_handle(),
+                cluster_id: target.cluster_id.to_string(),
+            },
         );
         Ok(id)
     }
@@ -155,7 +177,10 @@ impl ExecManager {
         if data.len() > 1024 * 1024 {
             return Err(AppError::validation("input chunk too large"));
         }
-        self.sender(id)?.send(Input::Data(data)).await.map_err(|_| AppError::Cancelled)
+        self.sender(id)?
+            .send(Input::Data(data))
+            .await
+            .map_err(|_| AppError::Cancelled)
     }
 
     pub async fn resize(&self, id: &str, cols: u16, rows: u16) -> AppResult<()> {

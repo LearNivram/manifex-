@@ -35,33 +35,73 @@ pub struct HelmStatus {
 pub async fn helm_status(state: State<'_, AppState>) -> AppResult<HelmStatus> {
     match cli(&state) {
         Ok(c) => match c.version().await {
-            Ok(v) => Ok(HelmStatus { available: true, version: Some(v), path: Some(c.path().to_string_lossy().into()), message: None }),
-            Err(e) => Ok(HelmStatus { available: false, version: None, path: Some(c.path().to_string_lossy().into()), message: Some(e.to_string()) }),
+            Ok(v) => Ok(HelmStatus {
+                available: true,
+                version: Some(v),
+                path: Some(c.path().to_string_lossy().into()),
+                message: None,
+            }),
+            Err(e) => Ok(HelmStatus {
+                available: false,
+                version: None,
+                path: Some(c.path().to_string_lossy().into()),
+                message: Some(e.to_string()),
+            }),
         },
-        Err(e) => Ok(HelmStatus { available: false, version: None, path: None, message: Some(e.to_string()) }),
+        Err(e) => Ok(HelmStatus {
+            available: false,
+            version: None,
+            path: None,
+            message: Some(e.to_string()),
+        }),
     }
 }
 
 #[tauri::command]
-pub async fn helm_releases(state: State<'_, AppState>, cluster_id: String, namespace: Option<String>) -> AppResult<Vec<HelmRelease>> {
+pub async fn helm_releases(
+    state: State<'_, AppState>,
+    cluster_id: String,
+    namespace: Option<String>,
+) -> AppResult<Vec<HelmRelease>> {
     let conn = state.conn(&cluster_id)?;
-    helm::list_releases(conn.client.clone(), namespace.as_deref().filter(|n| !n.is_empty())).await
+    helm::list_releases(
+        conn.client.clone(),
+        namespace.as_deref().filter(|n| !n.is_empty()),
+    )
+    .await
 }
 
 #[tauri::command]
-pub async fn helm_release(state: State<'_, AppState>, cluster_id: String, namespace: String, name: String) -> AppResult<HelmReleaseDetail> {
+pub async fn helm_release(
+    state: State<'_, AppState>,
+    cluster_id: String,
+    namespace: String,
+    name: String,
+) -> AppResult<HelmReleaseDetail> {
     let conn = state.conn(&cluster_id)?;
     helm::release_detail(conn.client.clone(), &namespace, &name).await
 }
 
 #[tauri::command]
-pub async fn helm_rollback(state: State<'_, AppState>, cluster_id: String, namespace: String, name: String, revision: i64) -> AppResult<HelmOutput> {
+pub async fn helm_rollback(
+    state: State<'_, AppState>,
+    cluster_id: String,
+    namespace: String,
+    name: String,
+    revision: i64,
+) -> AppResult<HelmOutput> {
     let helm = cli(&state)?;
     let kc = kubeconfig_for(&state, &cluster_id)?;
     state
         .audited(
             &cluster_id,
-            AuditTarget { action: "helm.rollback", resource: Some("HelmRelease".into()), namespace: Some(namespace.clone()), name: Some(name.clone()), detail: Some(format!("to revision {revision}")) },
+            AuditTarget {
+                action: "helm.rollback",
+                resource: Some("HelmRelease".into()),
+                namespace: Some(namespace.clone()),
+                name: Some(name.clone()),
+                detail: Some(format!("to revision {revision}")),
+            },
             helm.rollback(&kc, &namespace, &name, revision),
         )
         .await
@@ -82,7 +122,13 @@ pub async fn helm_uninstall(
     state
         .audited(
             &cluster_id,
-            AuditTarget { action: "helm.uninstall", resource: Some("HelmRelease".into()), namespace: Some(namespace.clone()), name: Some(name.clone()), detail: None },
+            AuditTarget {
+                action: "helm.uninstall",
+                resource: Some("HelmRelease".into()),
+                namespace: Some(namespace.clone()),
+                name: Some(name.clone()),
+                detail: None,
+            },
             helm.uninstall(&kc, &namespace, &name, keep_history),
         )
         .await
@@ -103,7 +149,11 @@ pub struct HelmUpgradeRequest {
 }
 
 #[tauri::command]
-pub async fn helm_upgrade(state: State<'_, AppState>, cluster_id: String, request: HelmUpgradeRequest) -> AppResult<HelmOutput> {
+pub async fn helm_upgrade(
+    state: State<'_, AppState>,
+    cluster_id: String,
+    request: HelmUpgradeRequest,
+) -> AppResult<HelmOutput> {
     let helm = cli(&state)?;
     let kc = kubeconfig_for(&state, &cluster_id)?;
     let run = helm.upgrade_install(
@@ -127,7 +177,11 @@ pub async fn helm_upgrade(state: State<'_, AppState>, cluster_id: String, reques
                 resource: Some("HelmRelease".into()),
                 namespace: Some(request.namespace.clone()),
                 name: Some(request.name.clone()),
-                detail: Some(format!("{} {}", request.chart, request.version.clone().unwrap_or_default())),
+                detail: Some(format!(
+                    "{} {}",
+                    request.chart,
+                    request.version.clone().unwrap_or_default()
+                )),
             },
             run,
         )
@@ -140,7 +194,11 @@ pub async fn helm_repos(state: State<'_, AppState>) -> AppResult<Value> {
 }
 
 #[tauri::command]
-pub async fn helm_repo_add(state: State<'_, AppState>, name: String, url: String) -> AppResult<HelmOutput> {
+pub async fn helm_repo_add(
+    state: State<'_, AppState>,
+    name: String,
+    url: String,
+) -> AppResult<HelmOutput> {
     cli(&state)?.repo_add(&name, &url).await
 }
 
@@ -160,6 +218,10 @@ pub async fn helm_search(state: State<'_, AppState>, query: String) -> AppResult
 }
 
 #[tauri::command]
-pub async fn helm_show_values(state: State<'_, AppState>, chart: String, version: Option<String>) -> AppResult<String> {
+pub async fn helm_show_values(
+    state: State<'_, AppState>,
+    chart: String,
+    version: Option<String>,
+) -> AppResult<String> {
     cli(&state)?.show_values(&chart, version.as_deref()).await
 }

@@ -161,9 +161,11 @@ code,
   background-clip: content-box;
 }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
 }
 
 .density-compact {
@@ -189,5 +191,43 @@ code,
   * {
     animation-duration: 0ms !important;
     transition-duration: 0ms !important;
+  }
+}
+
+/* Themed checkboxes (native ones ignore the dark palette on some platforms). */
+@layer base {
+  input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--panel);
+    display: inline-grid;
+    place-content: center;
+    cursor: pointer;
+    transition: background-color 100ms, border-color 100ms;
+  }
+  input[type="checkbox"]::after {
+    content: "";
+    width: 8px;
+    height: 5px;
+    border-left: 2px solid white;
+    border-bottom: 2px solid white;
+    transform: translateY(-1px) rotate(-45deg) scale(0);
+    transition: transform 100ms;
+  }
+  input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  input[type="checkbox"]:checked::after {
+    transform: translateY(-1px) rotate(-45deg) scale(1);
+  }
+  input[type="checkbox"]:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 }

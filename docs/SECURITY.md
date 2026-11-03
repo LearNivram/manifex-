@@ -26,7 +26,10 @@
 ## Tauri hardening
 
 - Strict CSP (`script-src 'self'`, no remote content, `connect-src ipc:`).
-- `freezePrototype` enabled.
+- `freezePrototype` is disabled on purpose: xterm.js and Monaco assign properties
+  that shadow `Object.prototype` members at module load (the JavaScript "override
+  mistake"), which throws once the prototype is frozen. The strict CSP and the
+  absence of remote content keep prototype-pollution attack surface minimal.
 - Capabilities grant only core window operations, notifications, the updater,
   process restart and deep links to application windows. **No** `fs`, `shell` or
   `http` plugins are enabled for the webview.

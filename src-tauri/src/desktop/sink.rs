@@ -37,13 +37,20 @@ pub struct TauriSink {
 
 impl TauriSink {
     pub fn new(app: AppHandle, db: Arc<Db>) -> Arc<Self> {
-        Arc::new(Self { app, db, native_window: Mutex::new(VecDeque::new()) })
+        Arc::new(Self {
+            app,
+            db,
+            native_window: Mutex::new(VecDeque::new()),
+        })
     }
 
     fn allow_native(&self) -> bool {
         let mut w = self.native_window.lock();
         let now = Instant::now();
-        while w.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(30)) {
+        while w
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(30))
+        {
             w.pop_front();
         }
         if w.len() >= 6 {
@@ -57,7 +64,14 @@ impl TauriSink {
         if !self.allow_native() {
             return;
         }
-        if let Err(e) = self.app.notification().builder().title(title).body(body).show() {
+        if let Err(e) = self
+            .app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+        {
             tracing::debug!(error = %e, "native notification failed");
         }
     }
@@ -70,7 +84,15 @@ impl EventSink for TauriSink {
     }
 
     fn notify(&self, severity: &str, title: &str, body: &str, cluster_id: Option<&str>) {
-        let _ = self.app.emit(EVT_NOTIFY, NotifyPayload { severity, title, body, cluster_id });
+        let _ = self.app.emit(
+            EVT_NOTIFY,
+            NotifyPayload {
+                severity,
+                title,
+                body,
+                cluster_id,
+            },
+        );
         let settings = self.db.load_settings().unwrap_or_default();
         if settings.native_notifications && settings.notify_connection_loss {
             self.native(title, body);

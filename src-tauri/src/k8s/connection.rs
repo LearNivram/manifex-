@@ -109,7 +109,12 @@ impl ClusterConn {
         }
         let mut guard = self.discovery.write().await;
         let client = self.client.clone();
-        let discovery = match tokio::time::timeout(Duration::from_secs(30), Discovery::new(client.clone()).run_aggregated()).await {
+        let discovery = match tokio::time::timeout(
+            Duration::from_secs(30),
+            Discovery::new(client.clone()).run_aggregated(),
+        )
+        .await
+        {
             Ok(Ok(d)) => d,
             _ => tokio::time::timeout(Duration::from_secs(60), Discovery::new(client).run())
                 .await
@@ -140,7 +145,12 @@ pub struct ClusterManager {
 async fn whoami(client: &Client) -> Option<String> {
     let api: Api<SelfSubjectReview> = Api::all(client.clone());
     let review = SelfSubjectReview::default();
-    match tokio::time::timeout(Duration::from_secs(5), api.create(&PostParams::default(), &review)).await {
+    match tokio::time::timeout(
+        Duration::from_secs(5),
+        api.create(&PostParams::default(), &review),
+    )
+    .await
+    {
         Ok(Ok(r)) => r.status.and_then(|s| s.user_info).and_then(|u| u.username),
         _ => None,
     }
@@ -148,7 +158,13 @@ async fn whoami(client: &Client) -> Option<String> {
 
 impl ClusterManager {
     pub fn new(db: Arc<Db>, vault: Arc<SecretVault>, sink: Arc<dyn EventSink>) -> Arc<Self> {
-        Arc::new(Self { db, vault, sink, conns: RwLock::new(HashMap::new()), statuses: RwLock::new(HashMap::new()) })
+        Arc::new(Self {
+            db,
+            vault,
+            sink,
+            conns: RwLock::new(HashMap::new()),
+            statuses: RwLock::new(HashMap::new()),
+        })
     }
 
     pub fn db(&self) -> &Arc<Db> {
@@ -160,7 +176,9 @@ impl ClusterManager {
     }
 
     fn set_status(&self, status: ClusterStatus) {
-        self.statuses.write().insert(status.id.clone(), status.clone());
+        self.statuses
+            .write()
+            .insert(status.id.clone(), status.clone());
         self.sink.cluster_status(&status);
     }
 
@@ -177,7 +195,11 @@ impl ClusterManager {
     }
 
     pub fn get(&self, id: &str) -> AppResult<Arc<ClusterConn>> {
-        self.conns.read().get(id).cloned().ok_or_else(|| AppError::NotConnected(id.to_string()))
+        self.conns
+            .read()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| AppError::NotConnected(id.to_string()))
     }
 
     pub fn client(&self, id: &str) -> AppResult<Client> {
@@ -191,7 +213,10 @@ impl ClusterManager {
         }
     }
 
-    pub async fn build_client(&self, profile: &ClusterProfile) -> AppResult<(Client, kube::Config)> {
+    pub async fn build_client(
+        &self,
+        profile: &ClusterProfile,
+    ) -> AppResult<(Client, kube::Config)> {
         let secret = self.load_secret(&profile.source)?;
         let config = kubeconfig::build_config(&profile.source, secret).await?;
         let client = Client::try_from(config.clone())?;
@@ -218,7 +243,11 @@ impl ClusterManager {
 
     /// Tests connection parameters with explicit secret material (used before a
     /// new cluster is saved, so nothing is persisted for failed attempts).
-    pub async fn test_with_secret(&self, profile: &ClusterProfile, secret: Option<Vec<u8>>) -> AppResult<ConnectionTestResult> {
+    pub async fn test_with_secret(
+        &self,
+        profile: &ClusterProfile,
+        secret: Option<Vec<u8>>,
+    ) -> AppResult<ConnectionTestResult> {
         let start = Instant::now();
         let built = async {
             let config = kubeconfig::build_config(&profile.source, secret).await?;
@@ -272,12 +301,19 @@ impl ClusterManager {
         let profile = self.db.get_cluster(id)?;
         self.set_status(ClusterStatus::new(&profile, ConnState::Connecting, None));
 
-        let result: AppResult<(Client, kube::Config, k8s_openapi::apimachinery::pkg::version::Info, u64)> = async {
+        let result: AppResult<(
+            Client,
+            kube::Config,
+            k8s_openapi::apimachinery::pkg::version::Info,
+            u64,
+        )> = async {
             let (client, config) = self.build_client(&profile).await?;
             let start = Instant::now();
             let info = tokio::time::timeout(Duration::from_secs(15), client.apiserver_version())
                 .await
-                .map_err(|_| AppError::Connection("API server did not respond within 15s".into()))??;
+                .map_err(|_| {
+                    AppError::Connection("API server did not respond within 15s".into())
+                })??;
             Ok((client, config, info, start.elapsed().as_millis() as u64))
         }
         .await;
@@ -285,7 +321,11 @@ impl ClusterManager {
         let (client, config, info, latency) = match result {
             Ok(v) => v,
             Err(e) => {
-                self.set_status(ClusterStatus::new(&profile, ConnState::Error, Some(e.to_string())));
+                self.set_status(ClusterStatus::new(
+                    &profile,
+                    ConnState::Error,
+                    Some(e.to_string()),
+                ));
                 return Err(e);
             }
         };
@@ -314,7 +354,10 @@ impl ClusterManager {
             health_task: RwLock::new(None),
         });
 
-        let handle = tokio::spawn(Self::health_loop(Arc::downgrade(self), Arc::downgrade(&conn)));
+        let handle = tokio::spawn(Self::health_loop(
+            Arc::downgrade(self),
+            Arc::downgrade(&conn),
+        ));
         *conn.health_task.write() = Some(handle.abort_handle());
         self.conns.write().insert(profile.id.clone(), conn);
         let _ = self.db.touch_cluster_connected(&profile.id);
@@ -326,7 +369,7 @@ impl ClusterManager {
     pub fn disconnect(&self, id: &str) {
         let removed = self.conns.write().remove(id);
         if removed.is_some() {
-            if let Some(p) = self.db.get_cluster(id).ok() {
+            if let Ok(p) = self.db.get_cluster(id) {
                 self.set_status(ClusterStatus::new(&p, ConnState::Disconnected, None));
             } else {
                 self.statuses.write().remove(id);
@@ -355,7 +398,11 @@ impl ClusterManager {
             let (interval, notify_loss, auto_reconnect) = match mgr.upgrade() {
                 Some(m) => {
                     let s = m.db.load_settings().unwrap_or_default();
-                    (s.health_interval_secs, s.notify_connection_loss, s.auto_reconnect)
+                    (
+                        s.health_interval_secs,
+                        s.notify_connection_loss,
+                        s.auto_reconnect,
+                    )
                 }
                 None => return,
             };
@@ -369,9 +416,12 @@ impl ClusterManager {
             };
             tokio::time::sleep(wait).await;
 
-            let (Some(m), Some(c)) = (mgr.upgrade(), conn.upgrade()) else { return };
+            let (Some(m), Some(c)) = (mgr.upgrade(), conn.upgrade()) else {
+                return;
+            };
             let start = Instant::now();
-            let probe = tokio::time::timeout(Duration::from_secs(8), c.client.apiserver_version()).await;
+            let probe =
+                tokio::time::timeout(Duration::from_secs(8), c.client.apiserver_version()).await;
             let ok = matches!(probe, Ok(Ok(_)));
             let prev = c.status.read().state;
             if ok {

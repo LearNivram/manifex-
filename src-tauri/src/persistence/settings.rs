@@ -88,7 +88,10 @@ const KEY: &str = "app";
 impl Db {
     pub fn load_settings(&self) -> AppResult<AppSettings> {
         let raw: Option<String> = self.with(|c| {
-            c.query_row("SELECT value FROM settings WHERE key=?1", [KEY], |r| r.get(0)).optional()
+            c.query_row("SELECT value FROM settings WHERE key=?1", [KEY], |r| {
+                r.get(0)
+            })
+            .optional()
         })?;
         Ok(raw
             .and_then(|r| serde_json::from_str::<AppSettings>(&r).ok())
@@ -109,7 +112,12 @@ impl Db {
     }
 
     pub fn get_kv(&self, key: &str) -> AppResult<Option<String>> {
-        self.with(|c| c.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| r.get(0)).optional())
+        self.with(|c| {
+            c.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()
+        })
     }
 
     pub fn set_kv(&self, key: &str, value: &str) -> AppResult<()> {
@@ -131,9 +139,11 @@ mod tests {
     fn defaults_and_roundtrip() {
         let db = Db::open_in_memory().unwrap();
         assert_eq!(db.load_settings().unwrap(), AppSettings::default());
-        let mut s = AppSettings::default();
-        s.theme = "dark".into();
-        s.log_tail_lines = 1_000_000;
+        let s = AppSettings {
+            theme: "dark".into(),
+            log_tail_lines: 1_000_000,
+            ..Default::default()
+        };
         let saved = db.save_settings(&s).unwrap();
         assert_eq!(saved.log_tail_lines, 50_000);
         assert_eq!(db.load_settings().unwrap().theme, "dark");

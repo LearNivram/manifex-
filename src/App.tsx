@@ -5,6 +5,7 @@ import { Plug } from "lucide-react";
 import { lazy, Suspense, useEffect } from "react";
 import { Button, EmptyState, Spinner, TooltipProvider } from "@/components/ui";
 import { ConfirmHost } from "@/components/ui/confirm";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { activateCluster } from "@/components/layout/ClusterSwitcher";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { NotificationCenter, Toasts } from "@/components/layout/NotificationCenter";
@@ -292,9 +293,17 @@ export default function App() {
               <div className={view === "terminal" ? "h-full" : "hidden"}>
                 <TerminalView />
               </div>
-              {view !== "terminal" && <MainView />}
+              {view !== "terminal" && (
+                <ErrorBoundary key={view} label={view}>
+                  <MainView />
+                </ErrorBoundary>
+              )}
             </div>
-            {selection && selection.clusterId === activeId && <DetailPanel />}
+            {selection && selection.clusterId === activeId && (
+              <ErrorBoundary key={`${selection.resource.kind}/${selection.name}`} label="the detail panel" onReset={() => useApp.getState().select(null)}>
+                <DetailPanel />
+              </ErrorBoundary>
+            )}
           </main>
         </div>
         <StatusBar />
@@ -306,6 +315,8 @@ export default function App() {
       <ConfirmHost />
       <Toasts />
       {editor && (
+        <div className="fixed inset-0 z-30 bg-canvas">
+        <ErrorBoundary label="the editor" onReset={() => useApp.getState().openEditor(null)}>
         <Suspense
           fallback={
             <div className="fixed inset-0 z-30 flex items-center justify-center bg-canvas">
@@ -315,6 +326,8 @@ export default function App() {
         >
           <EditorPanel state={editor} />
         </Suspense>
+        </ErrorBoundary>
+        </div>
       )}
     </TooltipProvider>
   );

@@ -22,14 +22,23 @@ pub struct ResourceRef {
 
 impl ResourceRef {
     pub fn new(group: &str, version: &str, kind: &str, plural: &str, namespaced: bool) -> Self {
-        Self { group: group.into(), version: version.into(), kind: kind.into(), plural: plural.into(), namespaced }
+        Self {
+            group: group.into(),
+            version: version.into(),
+            kind: kind.into(),
+            plural: plural.into(),
+            namespaced,
+        }
     }
 
     pub fn validate(&self) -> AppResult<()> {
         validate::api_segment("group", &self.group, true)?;
         validate::api_segment("version", &self.version, false)?;
         validate::api_segment("plural", &self.plural, false)?;
-        if self.kind.is_empty() || self.kind.len() > 128 || !self.kind.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        if self.kind.is_empty()
+            || self.kind.len() > 128
+            || !self.kind.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
             return Err(AppError::validation("kind is invalid"));
         }
         Ok(())
@@ -71,9 +80,15 @@ impl ResourceRef {
     }
 
     /// Api handle for a single named object; namespaced resources need a namespace.
-    pub fn api_for_object(&self, client: Client, namespace: Option<&str>) -> AppResult<Api<DynamicObject>> {
+    pub fn api_for_object(
+        &self,
+        client: Client,
+        namespace: Option<&str>,
+    ) -> AppResult<Api<DynamicObject>> {
         if self.namespaced {
-            let ns = namespace.filter(|n| !n.is_empty()).ok_or_else(|| AppError::validation("namespace is required"))?;
+            let ns = namespace
+                .filter(|n| !n.is_empty())
+                .ok_or_else(|| AppError::validation("namespace is required"))?;
             validate::namespace(ns)?;
             Ok(Api::namespaced_with(client, ns, &self.api_resource()))
         } else {
@@ -177,7 +192,11 @@ pub fn list_api_resources(discovery: &kube::discovery::Discovery) -> Vec<ApiReso
                 plural: ar.plural.clone(),
                 namespaced: caps.scope == Scope::Namespaced,
                 verbs: caps.operations.clone(),
-                subresources: caps.subresources.iter().map(|(sr, _)| sr.plural.clone()).collect(),
+                subresources: caps
+                    .subresources
+                    .iter()
+                    .map(|(sr, _)| sr.plural.clone())
+                    .collect(),
                 custom: !CORE_GROUPS.contains(&ar.group.as_str()),
             });
         }
@@ -197,9 +216,9 @@ pub fn resolve_kind(
         None => (String::new(), api_version.to_string()),
     };
     let gvk = kube::api::GroupVersionKind::gvk(&group, &version, kind);
-    let (ar, caps) = discovery
-        .resolve_gvk(&gvk)
-        .ok_or_else(|| AppError::validation(format!("the server does not know {kind} in {api_version}")))?;
+    let (ar, caps) = discovery.resolve_gvk(&gvk).ok_or_else(|| {
+        AppError::validation(format!("the server does not know {kind} in {api_version}"))
+    })?;
     Ok(ResourceRef {
         group: ar.group,
         version: ar.version,

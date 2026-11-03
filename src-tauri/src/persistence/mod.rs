@@ -101,7 +101,9 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.migrate()?;
         Ok(db)
     }
@@ -112,7 +114,9 @@ impl Db {
         for (idx, sql) in MIGRATIONS.iter().enumerate() {
             let target = idx as i64 + 1;
             if version < target {
-                conn.execute_batch(&format!("BEGIN; {sql}; PRAGMA user_version = {target}; COMMIT;"))?;
+                conn.execute_batch(&format!(
+                    "BEGIN; {sql}; PRAGMA user_version = {target}; COMMIT;"
+                ))?;
                 tracing::info!(target, "applied database migration");
             }
         }
@@ -133,7 +137,9 @@ mod tests {
     fn migrations_apply_idempotently() {
         let db = Db::open_in_memory().unwrap();
         db.migrate().unwrap();
-        let v: i64 = db.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get(0))).unwrap();
+        let v: i64 = db
+            .with(|c| c.query_row("PRAGMA user_version", [], |r| r.get(0)))
+            .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
     }
 }

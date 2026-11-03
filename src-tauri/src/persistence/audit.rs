@@ -63,7 +63,11 @@ impl Db {
 
     pub fn query_audit(&self, q: &AuditQuery) -> AppResult<Vec<AuditEntry>> {
         let limit = q.limit.unwrap_or(500).clamp(1, 10_000);
-        let search = q.search.as_ref().filter(|s| !s.is_empty()).map(|s| format!("%{}%", s.replace('%', "\\%")));
+        let search = q
+            .search
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{}%", s.replace('%', "\\%")));
         self.with(|c| {
             let mut stmt = c.prepare(
                 "SELECT id, ts, cluster_id, cluster_name, identity, action, resource, namespace, name, outcome, detail
@@ -117,9 +121,19 @@ mod tests {
             .unwrap();
         }
         assert_eq!(db.query_audit(&AuditQuery::default()).unwrap().len(), 3);
-        let failures = db.query_audit(&AuditQuery { outcome: Some("failure".into()), ..Default::default() }).unwrap();
+        let failures = db
+            .query_audit(&AuditQuery {
+                outcome: Some("failure".into()),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(failures.len(), 1);
-        let search = db.query_audit(&AuditQuery { search: Some("pod-2".into()), ..Default::default() }).unwrap();
+        let search = db
+            .query_audit(&AuditQuery {
+                search: Some("pod-2".into()),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(search.len(), 1);
     }
 }

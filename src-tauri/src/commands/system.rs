@@ -17,7 +17,11 @@ pub async fn get_settings(state: State<'_, AppState>) -> AppResult<AppSettings> 
 }
 
 #[tauri::command]
-pub async fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: AppSettings) -> AppResult<AppSettings> {
+pub async fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> AppResult<AppSettings> {
     let previous = state.db.load_settings()?;
     let saved = state.db.save_settings(&settings)?;
     if previous.global_shortcut != saved.global_shortcut {
@@ -49,7 +53,11 @@ pub async fn app_info(app: AppHandle, state: State<'_, AppState>) -> AppResult<A
         version: app.package_info().version.to_string(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
-        data_dir: app.path().app_data_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+        data_dir: app
+            .path()
+            .app_data_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
         vault_available: vault_status.is_ok(),
         vault_message: vault_status.err(),
         active_watches: watches,
@@ -75,7 +83,10 @@ pub async fn list_alert_rules(state: State<'_, AppState>) -> AppResult<Vec<Alert
 }
 
 #[tauri::command]
-pub async fn save_alert_rule(state: State<'_, AppState>, mut rule: AlertRule) -> AppResult<AlertRule> {
+pub async fn save_alert_rule(
+    state: State<'_, AppState>,
+    mut rule: AlertRule,
+) -> AppResult<AlertRule> {
     if rule.id.is_empty() {
         rule.id = uuid::Uuid::new_v4().to_string();
         rule.created_at = chrono::Utc::now().to_rfc3339();
@@ -95,7 +106,10 @@ pub async fn delete_alert_rule(state: State<'_, AppState>, id: String) -> AppRes
 }
 
 #[tauri::command]
-pub async fn query_audit(state: State<'_, AppState>, query: AuditQuery) -> AppResult<Vec<AuditEntry>> {
+pub async fn query_audit(
+    state: State<'_, AppState>,
+    query: AuditQuery,
+) -> AppResult<Vec<AuditEntry>> {
     state.db.query_audit(&query)
 }
 
@@ -111,12 +125,17 @@ pub async fn clear_audit(state: State<'_, AppState>) -> AppResult<()> {
 
 fn csv_escape(s: &str) -> String {
     // Neutralise spreadsheet formula injection and quote fields.
-    let s = if s.starts_with(['=', '+', '-', '@']) { format!("'{s}") } else { s.to_string() };
+    let s = if s.starts_with(['=', '+', '-', '@']) {
+        format!("'{s}")
+    } else {
+        s.to_string()
+    };
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
 pub fn audit_to_csv(entries: &[AuditEntry]) -> String {
-    let mut out = String::from("timestamp,cluster,identity,action,resource,namespace,name,outcome,detail\n");
+    let mut out =
+        String::from("timestamp,cluster,identity,action,resource,namespace,name,outcome,detail\n");
     for e in entries {
         let fields = [
             e.ts.as_str(),
@@ -129,7 +148,13 @@ pub fn audit_to_csv(entries: &[AuditEntry]) -> String {
             e.outcome.as_str(),
             e.detail.as_deref().unwrap_or(""),
         ];
-        out.push_str(&fields.iter().map(|f| csv_escape(f)).collect::<Vec<_>>().join(","));
+        out.push_str(
+            &fields
+                .iter()
+                .map(|f| csv_escape(f))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
         out.push('\n');
     }
     out
@@ -138,7 +163,11 @@ pub fn audit_to_csv(entries: &[AuditEntry]) -> String {
 /// Shows a native save dialog and writes the content. The frontend never receives
 /// direct file system access; the user picks every destination explicitly.
 #[tauri::command]
-pub async fn save_text_file(app: AppHandle, default_name: String, content: String) -> AppResult<Option<String>> {
+pub async fn save_text_file(
+    app: AppHandle,
+    default_name: String,
+    content: String,
+) -> AppResult<Option<String>> {
     if content.len() > 256 * 1024 * 1024 {
         return Err(AppError::validation("content too large"));
     }
@@ -147,16 +176,27 @@ pub async fn save_text_file(app: AppHandle, default_name: String, content: Strin
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .take(120)
         .collect();
-    let dialog = app.dialog().file().set_file_name(if safe_name.is_empty() { "export.txt".to_string() } else { safe_name });
+    let dialog = app.dialog().file().set_file_name(if safe_name.is_empty() {
+        "export.txt".to_string()
+    } else {
+        safe_name
+    });
     let picked = tokio::task::spawn_blocking(move || dialog.blocking_save_file()).await?;
     let Some(path) = picked else { return Ok(None) };
-    let path = path.into_path().map_err(|_| AppError::validation("unsupported destination"))?;
+    let path = path
+        .into_path()
+        .map_err(|_| AppError::validation("unsupported destination"))?;
     tokio::fs::write(&path, content).await?;
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
 #[tauri::command]
-pub async fn export_audit(app: AppHandle, state: State<'_, AppState>, query: AuditQuery, format: String) -> AppResult<Option<String>> {
+pub async fn export_audit(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    query: AuditQuery,
+    format: String,
+) -> AppResult<Option<String>> {
     let mut q = query;
     q.limit = Some(10_000);
     let entries = state.db.query_audit(&q)?;
@@ -164,11 +204,23 @@ pub async fn export_audit(app: AppHandle, state: State<'_, AppState>, query: Aud
         "json" => (serde_json::to_string_pretty(&entries)?, "json"),
         _ => (audit_to_csv(&entries), "csv"),
     };
-    save_text_file(app, format!("manifex-audit-{}.{ext}", chrono::Utc::now().format("%Y%m%d-%H%M%S")), content).await
+    save_text_file(
+        app,
+        format!(
+            "manifex-audit-{}.{ext}",
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        ),
+        content,
+    )
+    .await
 }
 
 #[tauri::command]
-pub async fn open_window(app: AppHandle, cluster_id: Option<String>, view: Option<String>) -> AppResult<String> {
+pub async fn open_window(
+    app: AppHandle,
+    cluster_id: Option<String>,
+    view: Option<String>,
+) -> AppResult<String> {
     crate::desktop::windows::open_window(&app, cluster_id.as_deref(), view.as_deref())
 }
 

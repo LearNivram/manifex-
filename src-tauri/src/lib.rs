@@ -66,7 +66,8 @@ pub fn register_global_shortcut(app: &tauri::AppHandle, accelerator: &str) -> Ap
     let shortcut: Shortcut = accelerator
         .parse()
         .map_err(|e| AppError::validation(format!("invalid shortcut '{accelerator}': {e}")))?;
-    gs.register(shortcut).map_err(|e| AppError::validation(format!("could not register shortcut: {e}")))?;
+    gs.register(shortcut)
+        .map_err(|e| AppError::validation(format!("could not register shortcut: {e}")))?;
     Ok(())
 }
 
@@ -86,14 +87,18 @@ fn toggle_main_window(app: &tauri::AppHandle) {
 pub fn run() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("MANIFEX_LOG").unwrap_or_else(|_| "manifex_lib=info,warn".into()),
+            tracing_subscriber::EnvFilter::try_from_env("MANIFEX_LOG")
+                .unwrap_or_else(|_| "manifex_lib=info,warn".into()),
         )
         .try_init();
 
     let builder = tauri::Builder::default()
         // must be registered first so a second launch forwards to this instance
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            let urls: Vec<String> = argv.into_iter().filter(|a| a.starts_with("manifex://")).collect();
+            let urls: Vec<String> = argv
+                .into_iter()
+                .filter(|a| a.starts_with("manifex://"))
+                .collect();
             if urls.is_empty() {
                 desktop::tray::show_main(app);
             } else {
@@ -128,7 +133,10 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let data_dir = app.path().app_data_dir()?;
-            let db = Arc::new(Db::open(&data_dir.join("manifex.db")).map_err(|e| anyhow::anyhow!(e.to_string()))?);
+            let db = Arc::new(
+                Db::open(&data_dir.join("manifex.db"))
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+            );
             let vault = Arc::new(SecretVault::os_backed());
             let sink = desktop::sink::TauriSink::new(handle.clone(), db.clone());
             let clusters = ClusterManager::new(db.clone(), vault.clone(), sink.clone());
@@ -147,7 +155,9 @@ pub fn run() {
             {
                 let menu = desktop::menu::build(&handle)?;
                 app.set_menu(menu)?;
-                app.on_menu_event(|app, event| desktop::menu::handle_event(app, event.id().as_ref()));
+                app.on_menu_event(|app, event| {
+                    desktop::menu::handle_event(app, event.id().as_ref())
+                });
             }
 
             if let Err(e) = desktop::tray::init(&handle) {
@@ -171,7 +181,10 @@ pub fn run() {
             }
             let dl_handle = handle.clone();
             app.deep_link().on_open_url(move |event| {
-                dispatch_deep_links(&dl_handle, event.urls().into_iter().map(|u| u.to_string()).collect());
+                dispatch_deep_links(
+                    &dl_handle,
+                    event.urls().into_iter().map(|u| u.to_string()).collect(),
+                );
             });
 
             // The window is created hidden and shown by the frontend once the first
@@ -191,7 +204,12 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     if let Some(state) = window.try_state::<AppState>() {
-                        if state.db.load_settings().map(|s| s.close_to_tray).unwrap_or(false) {
+                        if state
+                            .db
+                            .load_settings()
+                            .map(|s| s.close_to_tray)
+                            .unwrap_or(false)
+                        {
                             api.prevent_close();
                             let _ = window.hide();
                         }

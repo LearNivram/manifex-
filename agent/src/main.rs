@@ -38,7 +38,10 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 type Body = BoxBody<Bytes, hyper::Error>;
-type Upstream = Client<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>, Incoming>;
+type Upstream = Client<
+    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    Incoming,
+>;
 
 struct Config {
     listen: SocketAddr,
@@ -53,32 +56,56 @@ struct Config {
 }
 
 fn env(key: &str, default: &str) -> String {
-    std::env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
+    std::env::var(key)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 impl Config {
     fn from_env() -> Result<Self, String> {
-        let default_upstream = match (std::env::var("KUBERNETES_SERVICE_HOST"), std::env::var("KUBERNETES_SERVICE_PORT")) {
+        let default_upstream = match (
+            std::env::var("KUBERNETES_SERVICE_HOST"),
+            std::env::var("KUBERNETES_SERVICE_PORT"),
+        ) {
             (Ok(h), Ok(p)) if h.contains(':') => format!("https://[{h}]:{p}"),
             (Ok(h), Ok(p)) => format!("https://{h}:{p}"),
             _ => "https://kubernetes.default.svc".into(),
         };
-        let upstream: Uri = env("MANIFEX_AGENT_UPSTREAM", &default_upstream).parse().map_err(|e| format!("invalid upstream: {e}"))?;
+        let upstream: Uri = env("MANIFEX_AGENT_UPSTREAM", &default_upstream)
+            .parse()
+            .map_err(|e| format!("invalid upstream: {e}"))?;
         if upstream.scheme_str() != Some("https") {
             return Err("upstream must use https".into());
         }
         Ok(Self {
-            listen: env("MANIFEX_AGENT_LISTEN", "0.0.0.0:8443").parse().map_err(|e| format!("invalid listen address: {e}"))?,
+            listen: env("MANIFEX_AGENT_LISTEN", "0.0.0.0:8443")
+                .parse()
+                .map_err(|e| format!("invalid listen address: {e}"))?,
             tls_cert: env("MANIFEX_AGENT_TLS_CERT", "/etc/manifex-agent/tls/tls.crt"),
             tls_key: env("MANIFEX_AGENT_TLS_KEY", "/etc/manifex-agent/tls/tls.key"),
             token_file: env("MANIFEX_AGENT_TOKEN_FILE", "/etc/manifex-agent/auth/token"),
-            impersonate_user: std::env::var("MANIFEX_AGENT_IMPERSONATE_USER").ok().filter(|s| !s.is_empty()),
+            impersonate_user: std::env::var("MANIFEX_AGENT_IMPERSONATE_USER")
+                .ok()
+                .filter(|s| !s.is_empty()),
             impersonate_groups: std::env::var("MANIFEX_AGENT_IMPERSONATE_GROUPS")
-                .map(|g| g.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
+                .map(|g| {
+                    g.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
                 .unwrap_or_default(),
             upstream,
-            upstream_ca: env("MANIFEX_AGENT_UPSTREAM_CA", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"),
-            upstream_token_file: env("MANIFEX_AGENT_UPSTREAM_TOKEN_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
+            upstream_ca: env(
+                "MANIFEX_AGENT_UPSTREAM_CA",
+                "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+            ),
+            upstream_token_file: env(
+                "MANIFEX_AGENT_UPSTREAM_TOKEN_FILE",
+                "/var/run/secrets/kubernetes.io/serviceaccount/token",
+            ),
         })
     }
 }
@@ -90,7 +117,9 @@ struct State {
 
 fn load_certs(path: &str) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, String> {
     let data = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    rustls_pemfile::certs(&mut BufReader::new(&data[..])).collect::<Result<Vec<_>, _>>().map_err(|e| format!("{path}: {e}"))
+    rustls_pemfile::certs(&mut BufReader::new(&data[..]))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("{path}: {e}"))
 }
 
 fn tls_acceptor(cfg: &Config) -> Result<TlsAcceptor, String> {
@@ -99,12 +128,14 @@ fn tls_acceptor(cfg: &Config) -> Result<TlsAcceptor, String> {
     let key = rustls_pemfile::private_key(&mut BufReader::new(&key_data[..]))
         .map_err(|e| e.to_string())?
         .ok_or("no private key found")?;
-    let mut sc = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .map_err(|e| e.to_string())?
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| e.to_string())?;
+    let mut sc = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|e| e.to_string())?
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .map_err(|e| e.to_string())?;
     sc.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(TlsAcceptor::from(Arc::new(sc)))
 }
@@ -114,13 +145,21 @@ fn upstream_client(cfg: &Config) -> Result<Upstream, String> {
     for c in load_certs(&cfg.upstream_ca)? {
         roots.add(c).map_err(|e| e.to_string())?;
     }
-    let cc = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .map_err(|e| e.to_string())?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    let https = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(cc).https_only().enable_http1().build();
-    Ok(Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(60)).build(https))
+    let cc = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|e| e.to_string())?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let https = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(cc)
+        .https_only()
+        .enable_http1()
+        .build();
+    Ok(Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(Duration::from_secs(60))
+        .build(https))
 }
 
 fn text(status: StatusCode, msg: &'static str) -> Response<Body> {
@@ -128,35 +167,60 @@ fn text(status: StatusCode, msg: &'static str) -> Response<Body> {
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(body)).map_err(|never| match never {}).boxed())
+        .body(
+            Full::new(Bytes::from(body))
+                .map_err(|never| match never {})
+                .boxed(),
+        )
         .expect("valid response")
 }
 
 /// Reads the expected token on every request so rotation needs no restart.
 fn authorized(cfg: &Config, req: &Request<Incoming>) -> bool {
-    let Ok(expected) = std::fs::read_to_string(&cfg.token_file) else { return false };
+    let Ok(expected) = std::fs::read_to_string(&cfg.token_file) else {
+        return false;
+    };
     let expected = expected.trim();
     if expected.len() < 16 {
         return false; // refuse weak / missing tokens
     }
-    let Some(given) = req.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")) else {
+    let Some(given) = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
         return false;
     };
     given.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
-const HOP_BY_HOP: &[&str] = &["keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding"];
+const HOP_BY_HOP: &[&str] = &[
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+];
 
 fn is_upgrade(req: &Request<Incoming>) -> bool {
     req.headers()
         .get(CONNECTION)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("upgrade")))
+        .map(|v| {
+            v.split(',')
+                .any(|t| t.trim().eq_ignore_ascii_case("upgrade"))
+        })
         .unwrap_or(false)
         && req.headers().contains_key(UPGRADE)
 }
 
-async fn handle(state: Arc<State>, mut req: Request<Incoming>, peer: SocketAddr) -> Result<Response<Body>, hyper::Error> {
+async fn handle(
+    state: Arc<State>,
+    mut req: Request<Incoming>,
+    peer: SocketAddr,
+) -> Result<Response<Body>, hyper::Error> {
     if req.uri().path() == "/healthz" {
         return Ok(text(StatusCode::OK, "ok"));
     }
@@ -165,12 +229,20 @@ async fn handle(state: Arc<State>, mut req: Request<Incoming>, peer: SocketAddr)
         return Ok(text(StatusCode::UNAUTHORIZED, "Unauthorized"));
     }
     let Ok(sa_token) = std::fs::read_to_string(&state.cfg.upstream_token_file) else {
-        return Ok(text(StatusCode::BAD_GATEWAY, "agent service account token unavailable"));
+        return Ok(text(
+            StatusCode::BAD_GATEWAY,
+            "agent service account token unavailable",
+        ));
     };
     let upgrade = is_upgrade(&req);
 
     // Build the upstream URI.
-    let pq = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/").to_string();
+    let pq = req
+        .uri()
+        .path_and_query()
+        .map(|p| p.as_str())
+        .unwrap_or("/")
+        .to_string();
     let base = state.cfg.upstream.to_string();
     let uri: Uri = match format!("{}{}", base.trim_end_matches('/'), pq).parse() {
         Ok(u) => u,
@@ -185,14 +257,19 @@ async fn handle(state: Arc<State>, mut req: Request<Incoming>, peer: SocketAddr)
         .keys()
         .filter(|k| {
             let n = k.as_str();
-            n.starts_with("impersonate-") || HOP_BY_HOP.contains(&n) || (!upgrade && (n == "connection" || n == "upgrade"))
+            n.starts_with("impersonate-")
+                || HOP_BY_HOP.contains(&n)
+                || (!upgrade && (n == "connection" || n == "upgrade"))
         })
         .cloned()
         .collect();
     for k in to_remove {
         headers.remove(k);
     }
-    headers.insert(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", sa_token.trim())).expect("token is ascii"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", sa_token.trim())).expect("token is ascii"),
+    );
     if let Some(u) = &state.cfg.impersonate_user {
         if let Ok(v) = HeaderValue::from_str(u) {
             headers.insert("impersonate-user", v);
@@ -229,7 +306,10 @@ async fn handle(state: Arc<State>, mut req: Request<Incoming>, peer: SocketAddr)
                 }
             });
             let (parts, _) = resp.into_parts();
-            return Ok(Response::from_parts(parts, Empty::new().map_err(|never| match never {}).boxed()));
+            return Ok(Response::from_parts(
+                parts,
+                Empty::new().map_err(|never| match never {}).boxed(),
+            ));
         }
         let (parts, body) = resp.into_parts();
         return Ok(Response::from_parts(parts, body.boxed()));
@@ -268,7 +348,10 @@ async fn main() {
         eprintln!("cannot listen on {}: {e}", cfg.listen);
         std::process::exit(2);
     });
-    eprintln!("manifex-agent listening on {} → {}", cfg.listen, cfg.upstream);
+    eprintln!(
+        "manifex-agent listening on {} → {}",
+        cfg.listen, cfg.upstream
+    );
     let state = Arc::new(State { cfg, client });
     loop {
         tokio::select! {

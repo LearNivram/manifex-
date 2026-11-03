@@ -4,7 +4,10 @@
 use std::time::Duration;
 
 use k8s_openapi::api::core::v1::Pod;
-use kube::api::{DeleteParams, DynamicObject, EvictParams, ListParams, Patch, PatchParams, PostParams, PropagationPolicy};
+use kube::api::{
+    DeleteParams, DynamicObject, EvictParams, ListParams, Patch, PatchParams, PostParams,
+    PropagationPolicy,
+};
 use kube::{Api, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -43,14 +46,22 @@ pub struct ObjectView {
     pub yaml: String,
 }
 
-pub async fn get_object(client: Client, res: &ResourceRef, ns: Option<&str>, name: &str) -> AppResult<ObjectView> {
+pub async fn get_object(
+    client: Client,
+    res: &ResourceRef,
+    ns: Option<&str>,
+    name: &str,
+) -> AppResult<ObjectView> {
     res.validate()?;
     validate::object_name(name)?;
     let api = res.api_for_object(client, ns)?;
     let obj = timed(api.get(name)).await?;
     let value = clean_for_display(serde_json::to_value(&obj)?);
     let yaml = to_yaml(&value)?;
-    Ok(ObjectView { object: value, yaml })
+    Ok(ObjectView {
+        object: value,
+        yaml,
+    })
 }
 
 pub async fn list_objects(
@@ -76,7 +87,10 @@ pub async fn list_objects(
         lp = lp.limit(l);
     }
     let list = timed(api.list(&lp)).await?;
-    list.items.into_iter().map(|o| Ok(clean_for_display(serde_json::to_value(o)?))).collect()
+    list.items
+        .into_iter()
+        .map(|o| Ok(clean_for_display(serde_json::to_value(o)?)))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,7 +121,12 @@ pub fn parse_manifests(yaml: &str) -> AppResult<Vec<Value>> {
             continue;
         }
         let json: Value = serde_json::to_value(value)?;
-        if json.get("kind").and_then(Value::as_str).map(|k| k.ends_with("List")).unwrap_or(false) {
+        if json
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(|k| k.ends_with("List"))
+            .unwrap_or(false)
+        {
             if let Some(items) = json.get("items").and_then(Value::as_array) {
                 out.extend(items.iter().cloned());
                 continue;
@@ -116,7 +135,9 @@ pub fn parse_manifests(yaml: &str) -> AppResult<Vec<Value>> {
         out.push(json);
     }
     if out.is_empty() {
-        return Err(AppError::validation("no Kubernetes objects found in the document"));
+        return Err(AppError::validation(
+            "no Kubernetes objects found in the document",
+        ));
     }
     Ok(out)
 }
@@ -142,9 +163,21 @@ pub async fn apply_manifests(
     let mut discovery = conn.discovery(false).await?;
     let mut results = Vec::with_capacity(docs.len());
     for mut doc in docs {
-        let api_version = doc.get("apiVersion").and_then(Value::as_str).unwrap_or("").to_string();
-        let kind = doc.get("kind").and_then(Value::as_str).unwrap_or("").to_string();
-        let name = doc.pointer("/metadata/name").and_then(Value::as_str).unwrap_or("").to_string();
+        let api_version = doc
+            .get("apiVersion")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let kind = doc
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let name = doc
+            .pointer("/metadata/name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let mut result = ApplyResult {
             api_version: api_version.clone(),
             kind: kind.clone(),
@@ -216,7 +249,10 @@ pub async fn apply_manifests(
                         m.remove("managedFields");
                     }
                     let obj: DynamicObject = serde_json::from_value(doc.clone())?;
-                    let pp = PostParams { dry_run, field_manager: Some(FIELD_MANAGER.into()) };
+                    let pp = PostParams {
+                        dry_run,
+                        field_manager: Some(FIELD_MANAGER.into()),
+                    };
                     if existing.is_some() {
                         timed(api.replace(&name, &pp, &obj)).await?
                     } else {
@@ -229,7 +265,9 @@ pub async fn apply_manifests(
                 (true, ApplyMode::Apply) => "configured".into(),
                 (true, ApplyMode::Replace) => "replaced".into(),
             };
-            result.yaml = Some(to_yaml(&clean_for_display(serde_json::to_value(&applied)?))?);
+            result.yaml = Some(to_yaml(&clean_for_display(serde_json::to_value(
+                &applied,
+            )?))?);
             Ok(())
         }
         .await;
@@ -251,7 +289,13 @@ pub struct DeleteOptions {
     pub dry_run: bool,
 }
 
-pub async fn delete_object(client: Client, res: &ResourceRef, ns: Option<&str>, name: &str, opts: &DeleteOptions) -> AppResult<()> {
+pub async fn delete_object(
+    client: Client,
+    res: &ResourceRef,
+    ns: Option<&str>,
+    name: &str,
+    opts: &DeleteOptions,
+) -> AppResult<()> {
     res.validate()?;
     validate::object_name(name)?;
     let api = res.api_for_object(client, ns)?;
@@ -260,7 +304,11 @@ pub async fn delete_object(client: Client, res: &ResourceRef, ns: Option<&str>, 
         Some("Foreground") => Some(PropagationPolicy::Foreground),
         Some("Background") => Some(PropagationPolicy::Background),
         Some("Orphan") => Some(PropagationPolicy::Orphan),
-        Some(other) => return Err(AppError::validation(format!("unknown propagation policy {other}"))),
+        Some(other) => {
+            return Err(AppError::validation(format!(
+                "unknown propagation policy {other}"
+            )))
+        }
     };
     let dp = DeleteParams {
         dry_run: opts.dry_run,
@@ -272,9 +320,21 @@ pub async fn delete_object(client: Client, res: &ResourceRef, ns: Option<&str>, 
     Ok(())
 }
 
-pub async fn scale(client: Client, res: &ResourceRef, ns: &str, name: &str, replicas: i32) -> AppResult<()> {
-    if !matches!(res.kind.as_str(), "Deployment" | "StatefulSet" | "ReplicaSet") {
-        return Err(AppError::validation(format!("{} cannot be scaled", res.kind)));
+pub async fn scale(
+    client: Client,
+    res: &ResourceRef,
+    ns: &str,
+    name: &str,
+    replicas: i32,
+) -> AppResult<()> {
+    if !matches!(
+        res.kind.as_str(),
+        "Deployment" | "StatefulSet" | "ReplicaSet"
+    ) {
+        return Err(AppError::validation(format!(
+            "{} cannot be scaled",
+            res.kind
+        )));
     }
     if !(0..=10_000).contains(&replicas) {
         return Err(AppError::validation("replicas must be between 0 and 10000"));
@@ -287,8 +347,14 @@ pub async fn scale(client: Client, res: &ResourceRef, ns: &str, name: &str, repl
 }
 
 pub async fn restart(client: Client, res: &ResourceRef, ns: &str, name: &str) -> AppResult<()> {
-    if !matches!(res.kind.as_str(), "Deployment" | "StatefulSet" | "DaemonSet") {
-        return Err(AppError::validation(format!("{} cannot be restarted", res.kind)));
+    if !matches!(
+        res.kind.as_str(),
+        "Deployment" | "StatefulSet" | "DaemonSet"
+    ) {
+        return Err(AppError::validation(format!(
+            "{} cannot be restarted",
+            res.kind
+        )));
     }
     validate::object_name(name)?;
     let api = res.api_for_object(client, Some(ns))?;
@@ -321,7 +387,11 @@ pub struct RolloutRevision {
     pub current: bool,
 }
 
-pub async fn rollout_history(client: Client, ns: &str, name: &str) -> AppResult<Vec<RolloutRevision>> {
+pub async fn rollout_history(
+    client: Client,
+    ns: &str,
+    name: &str,
+) -> AppResult<Vec<RolloutRevision>> {
     validate::object_name(name)?;
     let dep_api = builtin::deployments().api_for_object(client.clone(), Some(ns))?;
     let dep = timed(dep_api.get(name)).await?;
@@ -347,7 +417,13 @@ pub async fn rollout_history(client: Client, ns: &str, name: &str) -> AppResult<
     let mut out: Vec<RolloutRevision> = rs_list
         .items
         .into_iter()
-        .filter(|rs| rs.metadata.owner_references.as_ref().map(|o| o.iter().any(|o| o.uid == dep_uid)).unwrap_or(false))
+        .filter(|rs| {
+            rs.metadata
+                .owner_references
+                .as_ref()
+                .map(|o| o.iter().any(|o| o.uid == dep_uid))
+                .unwrap_or(false)
+        })
         .filter_map(|rs| {
             let v = serde_json::to_value(&rs).ok()?;
             let ann = v.pointer("/metadata/annotations");
@@ -361,16 +437,31 @@ pub async fn rollout_history(client: Client, ns: &str, name: &str) -> AppResult<
                 images: v
                     .pointer("/spec/template/spec/containers")
                     .and_then(Value::as_array)
-                    .map(|cs| cs.iter().filter_map(|c| c.get("image").and_then(Value::as_str).map(String::from)).collect())
+                    .map(|cs| {
+                        cs.iter()
+                            .filter_map(|c| {
+                                c.get("image").and_then(Value::as_str).map(String::from)
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                created: v.pointer("/metadata/creationTimestamp").and_then(Value::as_str).map(String::from),
-                replicas: v.pointer("/status/replicas").and_then(Value::as_i64).unwrap_or(0),
-                change_cause: ann.and_then(|a| a.get("kubernetes.io/change-cause")).and_then(Value::as_str).map(String::from),
+                created: v
+                    .pointer("/metadata/creationTimestamp")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+                replicas: v
+                    .pointer("/status/replicas")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                change_cause: ann
+                    .and_then(|a| a.get("kubernetes.io/change-cause"))
+                    .and_then(Value::as_str)
+                    .map(String::from),
                 current: Some(revision) == current_rev,
             })
         })
         .collect();
-    out.sort_by(|a, b| b.revision.cmp(&a.revision));
+    out.sort_by_key(|r| std::cmp::Reverse(r.revision));
     Ok(out)
 }
 
@@ -386,14 +477,29 @@ pub async fn rollback(client: Client, ns: &str, name: &str, revision: i64) -> Ap
     }
     let rs_api = builtin::replicasets().api_for_object(client.clone(), Some(ns))?;
     let rs = timed(rs_api.get(&target.replica_set)).await?;
-    let mut template = rs.data.pointer("/spec/template").cloned().ok_or_else(|| AppError::internal("replica set has no template"))?;
-    if let Some(labels) = template.pointer_mut("/metadata/labels").and_then(Value::as_object_mut) {
+    let mut template = rs
+        .data
+        .pointer("/spec/template")
+        .cloned()
+        .ok_or_else(|| AppError::internal("replica set has no template"))?;
+    if let Some(labels) = template
+        .pointer_mut("/metadata/labels")
+        .and_then(Value::as_object_mut)
+    {
         labels.remove("pod-template-hash");
     }
     let dep_api = builtin::deployments().api_for_object(client, Some(ns))?;
     let mut dep = timed(dep_api.get(name)).await?;
     dep.data["spec"]["template"] = template;
-    timed(dep_api.replace(name, &PostParams { dry_run: false, field_manager: Some(FIELD_MANAGER.into()) }, &dep)).await?;
+    timed(dep_api.replace(
+        name,
+        &PostParams {
+            dry_run: false,
+            field_manager: Some(FIELD_MANAGER.into()),
+        },
+        &dep,
+    ))
+    .await?;
     Ok(())
 }
 
@@ -417,7 +523,12 @@ pub struct DrainOptions {
 
 impl Default for DrainOptions {
     fn default() -> Self {
-        Self { ignore_daemonsets: true, delete_emptydir_data: false, force: false, grace_period_seconds: None }
+        Self {
+            ignore_daemonsets: true,
+            delete_emptydir_data: false,
+            force: false,
+            grace_period_seconds: None,
+        }
     }
 }
 
@@ -432,13 +543,18 @@ pub struct DrainReport {
 pub async fn drain(client: Client, node: &str, opts: &DrainOptions) -> AppResult<DrainReport> {
     cordon(client.clone(), node, true).await?;
     let pods: Api<Pod> = Api::all(client.clone());
-    let list = timed(pods.list(&ListParams::default().fields(&format!("spec.nodeName={node}")))).await?;
+    let list =
+        timed(pods.list(&ListParams::default().fields(&format!("spec.nodeName={node}")))).await?;
     let mut report = DrainReport::default();
     for pod in list.items {
         let ns = pod.metadata.namespace.clone().unwrap_or_default();
         let name = pod.metadata.name.clone().unwrap_or_default();
         let id = format!("{ns}/{name}");
-        let phase = pod.status.as_ref().and_then(|s| s.phase.clone()).unwrap_or_default();
+        let phase = pod
+            .status
+            .as_ref()
+            .and_then(|s| s.phase.clone())
+            .unwrap_or_default();
         if phase == "Succeeded" || phase == "Failed" {
             // finished pods can be deleted without eviction semantics
         }
@@ -458,11 +574,16 @@ pub async fn drain(client: Client, node: &str, opts: &DrainOptions) -> AppResult
                     report.skipped.push((id, "managed by DaemonSet".into()));
                     continue;
                 }
-                report.failed.push((id, "managed by DaemonSet (enable 'ignore DaemonSets')".into()));
+                report.failed.push((
+                    id,
+                    "managed by DaemonSet (enable 'ignore DaemonSets')".into(),
+                ));
                 continue;
             }
         } else if !opts.force && phase != "Succeeded" && phase != "Failed" {
-            report.failed.push((id, "not managed by a controller (use force)".into()));
+            report
+                .failed
+                .push((id, "not managed by a controller (use force)".into()));
             continue;
         }
         let uses_emptydir = pod
@@ -472,12 +593,18 @@ pub async fn drain(client: Client, node: &str, opts: &DrainOptions) -> AppResult
             .map(|v| v.iter().any(|v| v.empty_dir.is_some()))
             .unwrap_or(false);
         if uses_emptydir && !opts.delete_emptydir_data {
-            report.failed.push((id, "uses emptyDir volume (enable 'delete emptyDir data')".into()));
+            report.failed.push((
+                id,
+                "uses emptyDir volume (enable 'delete emptyDir data')".into(),
+            ));
             continue;
         }
         let api: Api<Pod> = Api::namespaced(client.clone(), &ns);
         let ep = EvictParams {
-            delete_options: Some(DeleteParams { grace_period_seconds: opts.grace_period_seconds, ..Default::default() }),
+            delete_options: Some(DeleteParams {
+                grace_period_seconds: opts.grace_period_seconds,
+                ..Default::default()
+            }),
             ..Default::default()
         };
         match timed(api.evict(&name, &ep)).await {
@@ -488,7 +615,12 @@ pub async fn drain(client: Client, node: &str, opts: &DrainOptions) -> AppResult
     Ok(report)
 }
 
-pub async fn set_cronjob_suspended(client: Client, ns: &str, name: &str, suspend: bool) -> AppResult<()> {
+pub async fn set_cronjob_suspended(
+    client: Client,
+    ns: &str,
+    name: &str,
+    suspend: bool,
+) -> AppResult<()> {
     validate::object_name(name)?;
     let api = builtin::cronjobs().api_for_object(client, Some(ns))?;
     let patch = json!({ "spec": { "suspend": suspend } });
@@ -511,7 +643,10 @@ pub async fn trigger_cronjob(client: Client, ns: &str, name: &str) -> AppResult<
     base = base.trim_end_matches('-').to_string();
     let job_name = format!("{base}-manual-{suffix}");
     let job_name: String = job_name.chars().take(63).collect();
-    let mut annotations = template.pointer("/metadata/annotations").cloned().unwrap_or(json!({}));
+    let mut annotations = template
+        .pointer("/metadata/annotations")
+        .cloned()
+        .unwrap_or(json!({}));
     annotations["cronjob.kubernetes.io/instantiate"] = json!("manual");
     let job = json!({
         "apiVersion": "batch/v1",

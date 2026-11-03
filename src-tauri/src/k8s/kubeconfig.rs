@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use kube::config::{
-    AuthInfo, Cluster, Context, KubeConfigOptions, Kubeconfig, NamedAuthInfo, NamedCluster, NamedContext,
+    AuthInfo, Cluster, Context, KubeConfigOptions, Kubeconfig, NamedAuthInfo, NamedCluster,
+    NamedContext,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,9 @@ pub fn candidate_paths() -> Vec<PathBuf> {
         if let Ok(entries) = std::fs::read_dir(&kube_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
                 if name.starts_with('.') || !path.is_file() {
                     continue;
                 }
@@ -101,7 +104,11 @@ pub fn auth_kind(auth: Option<&AuthInfo>) -> String {
     let Some(a) = auth else { return "none".into() };
     if let Some(exec) = &a.exec {
         let cmd = exec.command.clone().unwrap_or_default();
-        let base = Path::new(&cmd).file_name().and_then(|s| s.to_str()).unwrap_or("plugin").to_string();
+        let base = Path::new(&cmd)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plugin")
+            .to_string();
         return format!("exec:{base}");
     }
     if let Some(p) = &a.auth_provider {
@@ -124,7 +131,11 @@ pub fn list_contexts(kc: &Kubeconfig) -> Vec<ContextInfo> {
         .iter()
         .filter_map(|nc| {
             let ctx = nc.context.as_ref()?;
-            let cluster = kc.clusters.iter().find(|c| c.name == ctx.cluster).and_then(|c| c.cluster.as_ref());
+            let cluster = kc
+                .clusters
+                .iter()
+                .find(|c| c.name == ctx.cluster)
+                .and_then(|c| c.cluster.as_ref());
             let auth = ctx
                 .user
                 .as_ref()
@@ -137,7 +148,9 @@ pub fn list_contexts(kc: &Kubeconfig) -> Vec<ContextInfo> {
                 namespace: ctx.namespace.clone(),
                 server: cluster.and_then(|c| c.server.clone()),
                 auth: auth_kind(auth),
-                insecure: cluster.and_then(|c| c.insecure_skip_tls_verify).unwrap_or(false),
+                insecure: cluster
+                    .and_then(|c| c.insecure_skip_tls_verify)
+                    .unwrap_or(false),
                 already_added: false,
             })
         })
@@ -153,7 +166,12 @@ pub fn inspect_path(path: &Path) -> DiscoveredKubeconfig {
             current_context: kc.current_context.clone(),
             error: None,
         },
-        Err(e) => DiscoveredKubeconfig { path: display, contexts: vec![], current_context: None, error: Some(e.to_string()) },
+        Err(e) => DiscoveredKubeconfig {
+            path: display,
+            contexts: vec![],
+            current_context: None,
+            error: Some(e.to_string()),
+        },
     }
 }
 
@@ -171,13 +189,18 @@ pub fn extract_single_context(kc: &Kubeconfig, context: &str) -> AppResult<Kubec
         .iter()
         .find(|c| c.name == context)
         .ok_or_else(|| AppError::NotFound(format!("context '{context}'")))?;
-    let ctx = nctx.context.clone().ok_or_else(|| AppError::validation("context is empty"))?;
+    let ctx = nctx
+        .context
+        .clone()
+        .ok_or_else(|| AppError::validation("context is empty"))?;
     let mut cluster = kc
         .clusters
         .iter()
         .find(|c| c.name == ctx.cluster)
         .cloned()
-        .ok_or_else(|| AppError::validation(format!("cluster '{}' missing in kubeconfig", ctx.cluster)))?;
+        .ok_or_else(|| {
+            AppError::validation(format!("cluster '{}' missing in kubeconfig", ctx.cluster))
+        })?;
     if let Some(c) = cluster.cluster.as_mut() {
         if let Some(path) = c.certificate_authority.take() {
             if c.certificate_authority_data.is_none() {
@@ -192,7 +215,9 @@ pub fn extract_single_context(kc: &Kubeconfig, context: &str) -> AppResult<Kubec
             .iter()
             .find(|a| &a.name == user_name)
             .cloned()
-            .ok_or_else(|| AppError::validation(format!("user '{user_name}' missing in kubeconfig")))?;
+            .ok_or_else(|| {
+                AppError::validation(format!("user '{user_name}' missing in kubeconfig"))
+            })?;
         if let Some(a) = user.auth_info.as_mut() {
             if let Some(path) = a.client_certificate.take() {
                 if a.client_certificate_data.is_none() {
@@ -206,7 +231,8 @@ pub fn extract_single_context(kc: &Kubeconfig, context: &str) -> AppResult<Kubec
             }
             if let Some(path) = a.token_file.take() {
                 if a.token.is_none() {
-                    let t = std::fs::read_to_string(&path).map_err(|e| AppError::Io(format!("{path}: {e}")))?;
+                    let t = std::fs::read_to_string(&path)
+                        .map_err(|e| AppError::Io(format!("{path}: {e}")))?;
                     a.token = Some(SecretString::from(t.trim().to_string()));
                 }
             }
@@ -231,8 +257,13 @@ pub fn kubeconfig_to_yaml_with_secrets(kc: &Kubeconfig) -> AppResult<String> {
     // SecretString fields are skipped/redacted by serde; put them back explicitly.
     if let Some(users) = value.get_mut("users").and_then(|u| u.as_array_mut()) {
         for (idx, named) in kc.auth_infos.iter().enumerate() {
-            let Some(auth) = &named.auth_info else { continue };
-            let Some(user_obj) = users.get_mut(idx).and_then(|u| u.get_mut("user")).and_then(|u| u.as_object_mut())
+            let Some(auth) = &named.auth_info else {
+                continue;
+            };
+            let Some(user_obj) = users
+                .get_mut(idx)
+                .and_then(|u| u.get_mut("user"))
+                .and_then(|u| u.as_object_mut())
             else {
                 continue;
             };
@@ -256,8 +287,14 @@ fn ensure_secure(kc: &Kubeconfig, context: &str) -> AppResult<()> {
         .iter()
         .find(|c| c.name == context)
         .and_then(|c| c.context.as_ref())
-        .ok_or_else(|| AppError::NotFound(format!("context '{context}' not found in kubeconfig")))?;
-    let cluster = kc.clusters.iter().find(|c| c.name == ctx.cluster).and_then(|c| c.cluster.as_ref());
+        .ok_or_else(|| {
+            AppError::NotFound(format!("context '{context}' not found in kubeconfig"))
+        })?;
+    let cluster = kc
+        .clusters
+        .iter()
+        .find(|c| c.name == ctx.cluster)
+        .and_then(|c| c.cluster.as_ref());
     if let Some(c) = cluster {
         if c.insecure_skip_tls_verify == Some(true) {
             return Err(AppError::Security(
@@ -269,7 +306,9 @@ fn ensure_secure(kc: &Kubeconfig, context: &str) -> AppResult<()> {
         }
         if let Some(server) = &c.server {
             if server.starts_with("http://") {
-                return Err(AppError::Security("plain HTTP API endpoints are not supported".into()));
+                return Err(AppError::Security(
+                    "plain HTTP API endpoints are not supported".into(),
+                ));
             }
         }
     }
@@ -295,23 +334,36 @@ fn synthetic_kubeconfig(
     if let Some(p) = proxy_url {
         validate::proxy_url(p)?;
     }
-    let ca = ca_pem.filter(|s| !s.trim().is_empty()).map(pem_to_b64).transpose()?;
+    let ca = ca_pem
+        .filter(|s| !s.trim().is_empty())
+        .map(pem_to_b64)
+        .transpose()?;
     Ok(Kubeconfig {
         clusters: vec![NamedCluster {
             name: "manifex".into(),
             cluster: Some(Cluster {
                 server: Some(server.trim().to_string()),
                 certificate_authority_data: ca,
-                tls_server_name: tls_server_name.filter(|s| !s.is_empty()).map(str::to_string),
+                tls_server_name: tls_server_name
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
                 proxy_url: proxy_url.filter(|s| !s.is_empty()).map(str::to_string),
                 ..Default::default()
             }),
             ..Default::default()
         }],
-        auth_infos: vec![NamedAuthInfo { name: "manifex".into(), auth_info: Some(auth), ..Default::default() }],
+        auth_infos: vec![NamedAuthInfo {
+            name: "manifex".into(),
+            auth_info: Some(auth),
+            ..Default::default()
+        }],
         contexts: vec![NamedContext {
             name: "manifex".into(),
-            context: Some(Context { cluster: "manifex".into(), user: Some("manifex".into()), ..Default::default() }),
+            context: Some(Context {
+                cluster: "manifex".into(),
+                user: Some("manifex".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         }],
         current_context: Some("manifex".into()),
@@ -321,38 +373,90 @@ fn synthetic_kubeconfig(
 
 /// Resolves a cluster source plus its secret material into a kubeconfig and the
 /// context name to use.
-pub fn resolve_kubeconfig(source: &ClusterSource, secret: Option<Vec<u8>>) -> AppResult<(Kubeconfig, String)> {
+pub fn resolve_kubeconfig(
+    source: &ClusterSource,
+    secret: Option<Vec<u8>>,
+) -> AppResult<(Kubeconfig, String)> {
     let secret_str = || -> AppResult<String> {
-        let bytes = secret.clone().ok_or_else(|| AppError::Vault("credentials missing for this cluster".into()))?;
+        let bytes = secret
+            .clone()
+            .ok_or_else(|| AppError::Vault("credentials missing for this cluster".into()))?;
         String::from_utf8(bytes).map_err(|_| AppError::Vault("credentials are corrupt".into()))
     };
     match source {
-        ClusterSource::Kubeconfig { path, context } => Ok((read_kubeconfig(Path::new(path))?, context.clone())),
-        ClusterSource::StoredKubeconfig { context, .. } => Ok((Kubeconfig::from_yaml(&secret_str()?)?, context.clone())),
-        ClusterSource::Token { server, ca_pem, tls_server_name, proxy_url, .. } => {
-            let auth = AuthInfo { token: Some(SecretString::from(secret_str()?)), ..Default::default() };
+        ClusterSource::Kubeconfig { path, context } => {
+            Ok((read_kubeconfig(Path::new(path))?, context.clone()))
+        }
+        ClusterSource::StoredKubeconfig { context, .. } => {
+            Ok((Kubeconfig::from_yaml(&secret_str()?)?, context.clone()))
+        }
+        ClusterSource::Token {
+            server,
+            ca_pem,
+            tls_server_name,
+            proxy_url,
+            ..
+        } => {
+            let auth = AuthInfo {
+                token: Some(SecretString::from(secret_str()?)),
+                ..Default::default()
+            };
             Ok((
-                synthetic_kubeconfig(server, ca_pem.as_deref(), tls_server_name.as_deref(), proxy_url.as_deref(), auth)?,
+                synthetic_kubeconfig(
+                    server,
+                    ca_pem.as_deref(),
+                    tls_server_name.as_deref(),
+                    proxy_url.as_deref(),
+                    auth,
+                )?,
                 "manifex".into(),
             ))
         }
-        ClusterSource::Agent { endpoint, ca_pem, proxy_url, .. } => {
-            let auth = AuthInfo { token: Some(SecretString::from(secret_str()?)), ..Default::default() };
+        ClusterSource::Agent {
+            endpoint,
+            ca_pem,
+            proxy_url,
+            ..
+        } => {
+            let auth = AuthInfo {
+                token: Some(SecretString::from(secret_str()?)),
+                ..Default::default()
+            };
             Ok((
-                synthetic_kubeconfig(endpoint, ca_pem.as_deref(), None, proxy_url.as_deref(), auth)?,
+                synthetic_kubeconfig(
+                    endpoint,
+                    ca_pem.as_deref(),
+                    None,
+                    proxy_url.as_deref(),
+                    auth,
+                )?,
                 "manifex".into(),
             ))
         }
-        ClusterSource::Certificate { server, ca_pem, tls_server_name, proxy_url, .. } => {
+        ClusterSource::Certificate {
+            server,
+            ca_pem,
+            tls_server_name,
+            proxy_url,
+            ..
+        } => {
             let creds: CertificateCredentials = serde_json::from_str(&secret_str()?)
                 .map_err(|_| AppError::Vault("certificate credentials are corrupt".into()))?;
             let auth = AuthInfo {
                 client_certificate_data: Some(pem_to_b64(&creds.cert_pem)?),
-                client_key_data: Some(SecretString::from(B64.encode(creds.key_pem.trim().as_bytes()))),
+                client_key_data: Some(SecretString::from(
+                    B64.encode(creds.key_pem.trim().as_bytes()),
+                )),
                 ..Default::default()
             };
             Ok((
-                synthetic_kubeconfig(server, ca_pem.as_deref(), tls_server_name.as_deref(), proxy_url.as_deref(), auth)?,
+                synthetic_kubeconfig(
+                    server,
+                    ca_pem.as_deref(),
+                    tls_server_name.as_deref(),
+                    proxy_url.as_deref(),
+                    auth,
+                )?,
                 "manifex".into(),
             ))
         }
@@ -360,10 +464,16 @@ pub fn resolve_kubeconfig(source: &ClusterSource, secret: Option<Vec<u8>>) -> Ap
 }
 
 /// Builds a kube client configuration. TLS verification is always enforced.
-pub async fn build_config(source: &ClusterSource, secret: Option<Vec<u8>>) -> AppResult<kube::Config> {
+pub async fn build_config(
+    source: &ClusterSource,
+    secret: Option<Vec<u8>>,
+) -> AppResult<kube::Config> {
     let (kc, context) = resolve_kubeconfig(source, secret)?;
     ensure_secure(&kc, &context)?;
-    let options = KubeConfigOptions { context: Some(context), ..Default::default() };
+    let options = KubeConfigOptions {
+        context: Some(context),
+        ..Default::default()
+    };
     let mut config = kube::Config::from_custom_kubeconfig(kc, &options).await?;
     config.accept_invalid_certs = false;
     config.connect_timeout = Some(std::time::Duration::from_secs(10));
@@ -427,7 +537,10 @@ contexts:
     fn refuses_insecure_contexts() {
         let kc = Kubeconfig::from_yaml(SAMPLE).unwrap();
         assert!(ensure_secure(&kc, "dev").is_ok());
-        assert!(matches!(ensure_secure(&kc, "insecure"), Err(AppError::Security(_))));
+        assert!(matches!(
+            ensure_secure(&kc, "insecure"),
+            Err(AppError::Security(_))
+        ));
     }
 
     #[test]
@@ -437,10 +550,23 @@ contexts:
         assert_eq!(single.contexts.len(), 1);
         assert_eq!(single.clusters.len(), 1);
         let yaml = kubeconfig_to_yaml_with_secrets(&single).unwrap();
-        assert!(yaml.contains("abc123"), "token must survive serialisation into the vault");
+        assert!(
+            yaml.contains("abc123"),
+            "token must survive serialisation into the vault"
+        );
         let back = Kubeconfig::from_yaml(&yaml).unwrap();
         assert_eq!(back.current_context.as_deref(), Some("dev"));
-        assert_eq!(back.auth_infos[0].auth_info.as_ref().unwrap().token.as_ref().unwrap().expose_secret(), "abc123");
+        assert_eq!(
+            back.auth_infos[0]
+                .auth_info
+                .as_ref()
+                .unwrap()
+                .token
+                .as_ref()
+                .unwrap()
+                .expose_secret(),
+            "abc123"
+        );
     }
 
     #[test]

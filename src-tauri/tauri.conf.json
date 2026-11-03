@@ -41,7 +41,7 @@
         "form-action": "'none'",
         "frame-ancestors": "'none'"
       },
-      "freezePrototype": true,
+      "freezePrototype": false,
       "capabilities": ["main-capability"]
     }
   },

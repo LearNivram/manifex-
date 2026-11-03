@@ -57,9 +57,33 @@ pub struct AlertEngine {
     dedupe: Mutex<HashMap<String, Instant>>,
 }
 
-const POD_CRITICAL: &[&str] = &["BackOff", "Failed", "OOMKilling", "Evicted", "ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff"];
-const POD_WARNING: &[&str] = &["Unhealthy", "FailedMount", "FailedAttachVolume", "FailedScheduling", "FailedCreatePodSandBox", "InspectFailed", "FailedKillPod"];
-const WORKLOAD_KINDS: &[&str] = &["Deployment", "ReplicaSet", "StatefulSet", "DaemonSet", "Job", "CronJob", "HorizontalPodAutoscaler"];
+const POD_CRITICAL: &[&str] = &[
+    "BackOff",
+    "Failed",
+    "OOMKilling",
+    "Evicted",
+    "ErrImagePull",
+    "ImagePullBackOff",
+    "CrashLoopBackOff",
+];
+const POD_WARNING: &[&str] = &[
+    "Unhealthy",
+    "FailedMount",
+    "FailedAttachVolume",
+    "FailedScheduling",
+    "FailedCreatePodSandBox",
+    "InspectFailed",
+    "FailedKillPod",
+];
+const WORKLOAD_KINDS: &[&str] = &[
+    "Deployment",
+    "ReplicaSet",
+    "StatefulSet",
+    "DaemonSet",
+    "Job",
+    "CronJob",
+    "HorizontalPodAutoscaler",
+];
 
 /// Classifies a Warning event. Returns (category, severity, title).
 pub fn classify(kind: &str, reason: &str, name: &str) -> (&'static str, &'static str, String) {
@@ -79,7 +103,10 @@ pub fn classify(kind: &str, reason: &str, name: &str) -> (&'static str, &'static
         }
     }
     if WORKLOAD_KINDS.contains(&kind) {
-        let sev = if reason.starts_with("Failed") || reason == "ProgressDeadlineExceeded" || reason == "BackoffLimitExceeded" {
+        let sev = if reason.starts_with("Failed")
+            || reason == "ProgressDeadlineExceeded"
+            || reason == "BackoffLimitExceeded"
+        {
             "critical"
         } else {
             "warning"
@@ -92,23 +119,44 @@ pub fn classify(kind: &str, reason: &str, name: &str) -> (&'static str, &'static
     ("event", "warning", format!("{kind} {name}: {reason}"))
 }
 
-pub fn rule_matches(rule: &AlertRule, cluster_id: &str, namespace: Option<&str>, kind: &str, reason: &str, message: &str) -> bool {
+pub fn rule_matches(
+    rule: &AlertRule,
+    cluster_id: &str,
+    namespace: Option<&str>,
+    kind: &str,
+    reason: &str,
+    message: &str,
+) -> bool {
     if !rule.enabled {
         return false;
     }
     if rule.cluster_id.as_deref().is_some_and(|c| c != cluster_id) {
         return false;
     }
-    if rule.namespace.as_deref().filter(|n| !n.is_empty()).is_some_and(|n| Some(n) != namespace) {
+    if rule
+        .namespace
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .is_some_and(|n| Some(n) != namespace)
+    {
         return false;
     }
-    if rule.kind.as_deref().filter(|k| !k.is_empty()).is_some_and(|k| !k.eq_ignore_ascii_case(kind)) {
+    if rule
+        .kind
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .is_some_and(|k| !k.eq_ignore_ascii_case(kind))
+    {
         return false;
     }
     let re_match = |pattern: &Option<String>, text: &str| -> bool {
         match pattern.as_deref().filter(|p| !p.is_empty()) {
             None => true,
-            Some(p) => regex::RegexBuilder::new(p).size_limit(1 << 20).build().map(|r| r.is_match(text)).unwrap_or(false),
+            Some(p) => regex::RegexBuilder::new(p)
+                .size_limit(1 << 20)
+                .build()
+                .map(|r| r.is_match(text))
+                .unwrap_or(false),
         }
     };
     re_match(&rule.reason_pattern, reason) && re_match(&rule.message_pattern, message)
@@ -177,12 +225,32 @@ impl AlertEngine {
 
     pub fn start(self: &Arc<Self>, cluster_id: &str, cluster_name: &str, client: Client) {
         self.stop(cluster_id);
-        let events = tokio::spawn(Self::watch_events(Arc::downgrade(self), cluster_id.into(), cluster_name.into(), client.clone()));
-        let nodes = tokio::spawn(Self::watch_nodes(Arc::downgrade(self), cluster_id.into(), cluster_name.into(), client));
-        self.tasks.lock().insert(cluster_id.into(), vec![events.abort_handle(), nodes.abort_handle()]);
+        let events = tokio::spawn(Self::watch_events(
+            Arc::downgrade(self),
+            cluster_id.into(),
+            cluster_name.into(),
+            client.clone(),
+        ));
+        let nodes = tokio::spawn(Self::watch_nodes(
+            Arc::downgrade(self),
+            cluster_id.into(),
+            cluster_name.into(),
+            client,
+        ));
+        self.tasks.lock().insert(
+            cluster_id.into(),
+            vec![events.abort_handle(), nodes.abort_handle()],
+        );
     }
 
-    fn new_alert(cluster_id: &str, cluster_name: &str, severity: &str, category: &str, title: String, message: String) -> Alert {
+    fn new_alert(
+        cluster_id: &str,
+        cluster_name: &str,
+        severity: &str,
+        category: &str,
+        title: String,
+        message: String,
+    ) -> Alert {
         Alert {
             id: uuid::Uuid::new_v4().to_string(),
             ts: chrono::Utc::now().to_rfc3339(),
@@ -199,15 +267,25 @@ impl AlertEngine {
         }
     }
 
-    async fn watch_events(engine: std::sync::Weak<Self>, cluster_id: String, cluster_name: String, client: Client) {
+    async fn watch_events(
+        engine: std::sync::Weak<Self>,
+        cluster_id: String,
+        cluster_name: String,
+        client: Client,
+    ) {
         let api: Api<Event> = Api::all(client);
         let cfg = watcher::Config::default().fields("type=Warning");
         let mut stream = watcher(api, cfg).default_backoff().boxed();
-        let mut rules: (Vec<AlertRule>, Instant) = (Vec::new(), Instant::now() - Duration::from_secs(3600));
+        let mut rules: (Vec<AlertRule>, Instant) =
+            (Vec::new(), Instant::now() - Duration::from_secs(3600));
         while let Some(ev) = stream.next().await {
-            let Some(engine) = engine.upgrade() else { return };
+            let Some(engine) = engine.upgrade() else {
+                return;
+            };
             // Only live updates – the initial list contains historic events.
-            let Ok(watcher::Event::Apply(ev)) = ev else { continue };
+            let Ok(watcher::Event::Apply(ev)) = ev else {
+                continue;
+            };
             if event_age_secs(&ev).is_some_and(|age| age > MAX_EVENT_AGE_SECS) {
                 continue;
             }
@@ -222,7 +300,11 @@ impl AlertEngine {
             let message = ev.message.clone().unwrap_or_default();
             let uid = obj.uid.clone().unwrap_or_else(|| format!("{kind}/{name}"));
 
-            for rule in rules.0.iter().filter(|r| rule_matches(r, &cluster_id, ns.as_deref(), &kind, &reason, &message)) {
+            for rule in rules
+                .0
+                .iter()
+                .filter(|r| rule_matches(r, &cluster_id, ns.as_deref(), &kind, &reason, &message))
+            {
                 let mut alert = Self::new_alert(
                     &cluster_id,
                     &cluster_name,
@@ -235,11 +317,21 @@ impl AlertEngine {
                 alert.object_kind = Some(kind.clone());
                 alert.object_name = Some(name.clone());
                 alert.rule_id = Some(rule.id.clone());
-                engine.emit(alert, Some(format!("rule|{}|{cluster_id}|{uid}|{reason}", rule.id)));
+                engine.emit(
+                    alert,
+                    Some(format!("rule|{}|{cluster_id}|{uid}|{reason}", rule.id)),
+                );
             }
 
             let (category, severity, title) = classify(&kind, &reason, &name);
-            let mut alert = Self::new_alert(&cluster_id, &cluster_name, severity, category, title, message);
+            let mut alert = Self::new_alert(
+                &cluster_id,
+                &cluster_name,
+                severity,
+                category,
+                title,
+                message,
+            );
             alert.namespace = ns;
             alert.object_kind = Some(kind);
             alert.object_name = Some(name);
@@ -247,14 +339,23 @@ impl AlertEngine {
         }
     }
 
-    async fn watch_nodes(engine: std::sync::Weak<Self>, cluster_id: String, cluster_name: String, client: Client) {
+    async fn watch_nodes(
+        engine: std::sync::Weak<Self>,
+        cluster_id: String,
+        cluster_name: String,
+        client: Client,
+    ) {
         let api: Api<Node> = Api::all(client);
-        let mut stream = watcher(api, watcher::Config::default()).default_backoff().boxed();
+        let mut stream = watcher(api, watcher::Config::default())
+            .default_backoff()
+            .boxed();
         // node name -> (ready, pressures)
         let mut state: HashMap<String, (bool, Vec<String>)> = HashMap::new();
         let mut initialised = false;
         while let Some(ev) = stream.next().await {
-            let Some(engine) = engine.upgrade() else { return };
+            let Some(engine) = engine.upgrade() else {
+                return;
+            };
             let node = match ev {
                 Ok(watcher::Event::InitApply(n)) => {
                     if let Some((name, s)) = node_state(&n) {
@@ -275,25 +376,48 @@ impl AlertEngine {
                 }
                 _ => continue,
             };
-            let Some((name, (ready, pressures))) = node_state(&node) else { continue };
+            let Some((name, (ready, pressures))) = node_state(&node) else {
+                continue;
+            };
             let prev = state.insert(name.clone(), (ready, pressures.clone()));
             if !initialised {
                 continue;
             }
             let (was_ready, prev_pressures) = prev.unwrap_or((true, vec![]));
             if was_ready && !ready {
-                let mut a = Self::new_alert(&cluster_id, &cluster_name, "critical", "node", format!("Node {name} is NotReady"), "The node stopped reporting Ready.".into());
+                let mut a = Self::new_alert(
+                    &cluster_id,
+                    &cluster_name,
+                    "critical",
+                    "node",
+                    format!("Node {name} is NotReady"),
+                    "The node stopped reporting Ready.".into(),
+                );
                 a.object_kind = Some("Node".into());
                 a.object_name = Some(name.clone());
                 engine.emit(a, Some(format!("{cluster_id}|node|{name}|notready")));
             } else if !was_ready && ready {
-                let mut a = Self::new_alert(&cluster_id, &cluster_name, "info", "node", format!("Node {name} is Ready again"), String::new());
+                let mut a = Self::new_alert(
+                    &cluster_id,
+                    &cluster_name,
+                    "info",
+                    "node",
+                    format!("Node {name} is Ready again"),
+                    String::new(),
+                );
                 a.object_kind = Some("Node".into());
                 a.object_name = Some(name.clone());
                 engine.emit(a, None);
             }
             for p in pressures.iter().filter(|p| !prev_pressures.contains(p)) {
-                let mut a = Self::new_alert(&cluster_id, &cluster_name, "warning", "node", format!("Node {name}: {p}"), format!("The node reports {p}."));
+                let mut a = Self::new_alert(
+                    &cluster_id,
+                    &cluster_name,
+                    "warning",
+                    "node",
+                    format!("Node {name}: {p}"),
+                    format!("The node reports {p}."),
+                );
                 a.object_kind = Some("Node".into());
                 a.object_name = Some(name.clone());
                 engine.emit(a, Some(format!("{cluster_id}|node|{name}|{p}")));
@@ -305,7 +429,9 @@ impl AlertEngine {
 fn node_state(n: &Node) -> Option<(String, (bool, Vec<String>))> {
     let name = n.metadata.name.clone()?;
     let conds = n.status.as_ref().and_then(|s| s.conditions.as_ref());
-    let ready = conds.map(|c| c.iter().any(|c| c.type_ == "Ready" && c.status == "True")).unwrap_or(false);
+    let ready = conds
+        .map(|c| c.iter().any(|c| c.type_ == "Ready" && c.status == "True"))
+        .unwrap_or(false);
     let pressures = conds
         .map(|c| {
             c.iter()
@@ -325,9 +451,18 @@ mod tests {
     fn classifies_events() {
         assert_eq!(classify("Pod", "BackOff", "web").1, "critical");
         assert_eq!(classify("Pod", "Unhealthy", "web").1, "warning");
-        assert_eq!(classify("Deployment", "ProgressDeadlineExceeded", "api").0, "workload");
-        assert_eq!(classify("Deployment", "ProgressDeadlineExceeded", "api").1, "critical");
-        assert_eq!(classify("Service", "SyncLoadBalancerFailed", "lb").0, "event");
+        assert_eq!(
+            classify("Deployment", "ProgressDeadlineExceeded", "api").0,
+            "workload"
+        );
+        assert_eq!(
+            classify("Deployment", "ProgressDeadlineExceeded", "api").1,
+            "critical"
+        );
+        assert_eq!(
+            classify("Service", "SyncLoadBalancerFailed", "lb").0,
+            "event"
+        );
     }
 
     #[test]
@@ -344,11 +479,42 @@ mod tests {
             severity: "critical".into(),
             created_at: String::new(),
         };
-        assert!(rule_matches(&rule, "c", Some("prod"), "Pod", "OOMKilling", "x"));
-        assert!(!rule_matches(&rule, "c", Some("dev"), "Pod", "OOMKilling", "x"));
-        assert!(!rule_matches(&rule, "c", Some("prod"), "Pod", "BackOff", "x"));
-        let disabled = AlertRule { enabled: false, ..rule };
-        assert!(!rule_matches(&disabled, "c", Some("prod"), "Pod", "OOMKilling", "x"));
+        assert!(rule_matches(
+            &rule,
+            "c",
+            Some("prod"),
+            "Pod",
+            "OOMKilling",
+            "x"
+        ));
+        assert!(!rule_matches(
+            &rule,
+            "c",
+            Some("dev"),
+            "Pod",
+            "OOMKilling",
+            "x"
+        ));
+        assert!(!rule_matches(
+            &rule,
+            "c",
+            Some("prod"),
+            "Pod",
+            "BackOff",
+            "x"
+        ));
+        let disabled = AlertRule {
+            enabled: false,
+            ..rule
+        };
+        assert!(!rule_matches(
+            &disabled,
+            "c",
+            Some("prod"),
+            "Pod",
+            "OOMKilling",
+            "x"
+        ));
     }
 
     struct Collect(Mutex<Vec<Alert>>);

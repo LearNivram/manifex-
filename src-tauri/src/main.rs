@@ -1,1 +1,3 @@
-fn main(){ manifex_lib::run() }
+fn main() {
+    manifex_lib::run()
+}

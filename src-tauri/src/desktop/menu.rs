@@ -6,14 +6,23 @@ use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Runtime};
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let about = AboutMetadata { name: Some("Manifex".into()), ..Default::default() };
+    let about = AboutMetadata {
+        name: Some("Manifex".into()),
+        ..Default::default()
+    };
     let app_menu = Submenu::with_items(
         app,
         "Manifex",
         true,
         &[
             &PredefinedMenuItem::about(app, Some("About Manifex"), Some(about))?,
-            &MenuItem::with_id(app, "menu:check-updates", "Check for Updates…", true, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                "menu:check-updates",
+                "Check for Updates…",
+                true,
+                None::<&str>,
+            )?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "menu:settings", "Settings…", true, Some("CmdOrCtrl+,"))?,
             &PredefinedMenuItem::separator(app)?,
@@ -29,9 +38,27 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "File",
         true,
         &[
-            &MenuItem::with_id(app, "menu:new-window", "New Window", true, Some("CmdOrCtrl+Shift+N"))?,
-            &MenuItem::with_id(app, "menu:add-cluster", "Add Cluster…", true, Some("CmdOrCtrl+Shift+A"))?,
-            &MenuItem::with_id(app, "menu:new-resource", "New Resource…", true, Some("CmdOrCtrl+N"))?,
+            &MenuItem::with_id(
+                app,
+                "menu:new-window",
+                "New Window",
+                true,
+                Some("CmdOrCtrl+Shift+N"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "menu:add-cluster",
+                "Add Cluster…",
+                true,
+                Some("CmdOrCtrl+Shift+A"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "menu:new-resource",
+                "New Resource…",
+                true,
+                Some("CmdOrCtrl+N"),
+            )?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, None)?,
         ],
@@ -55,10 +82,34 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "View",
         true,
         &[
-            &MenuItem::with_id(app, "menu:command-palette", "Command Palette…", true, Some("CmdOrCtrl+K"))?,
-            &MenuItem::with_id(app, "menu:search", "Search Resources…", true, Some("CmdOrCtrl+Shift+F"))?,
-            &MenuItem::with_id(app, "menu:toggle-sidebar", "Toggle Sidebar", true, Some("CmdOrCtrl+B"))?,
-            &MenuItem::with_id(app, "menu:toggle-details", "Toggle Details Panel", true, Some("CmdOrCtrl+J"))?,
+            &MenuItem::with_id(
+                app,
+                "menu:command-palette",
+                "Command Palette…",
+                true,
+                Some("CmdOrCtrl+K"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "menu:search",
+                "Search Resources…",
+                true,
+                Some("CmdOrCtrl+Shift+F"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "menu:toggle-sidebar",
+                "Toggle Sidebar",
+                true,
+                Some("CmdOrCtrl+B"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "menu:toggle-details",
+                "Toggle Details Panel",
+                true,
+                Some("CmdOrCtrl+J"),
+            )?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "menu:terminal", "Terminal", true, Some("CmdOrCtrl+`"))?,
             &PredefinedMenuItem::separator(app)?,
@@ -69,7 +120,10 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         app,
         "Window",
         true,
-        &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, None)?],
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+        ],
     )?;
     Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])
 }

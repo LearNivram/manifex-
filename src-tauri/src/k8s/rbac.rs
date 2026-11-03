@@ -5,8 +5,8 @@
 use std::time::{Duration, Instant};
 
 use k8s_openapi::api::authorization::v1::{
-    ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec, SelfSubjectRulesReview,
-    SelfSubjectRulesReviewSpec,
+    ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec,
+    SelfSubjectRulesReview, SelfSubjectRulesReviewSpec,
 };
 use kube::api::PostParams;
 use kube::Api;
@@ -74,7 +74,12 @@ pub async fn can_i(conn: &ClusterConn, checks: Vec<AccessCheck>) -> AppResult<Ve
                 },
                 ..Default::default()
             };
-            let allowed = match tokio::time::timeout(Duration::from_secs(10), api.create(&PostParams::default(), &review)).await {
+            let allowed = match tokio::time::timeout(
+                Duration::from_secs(10),
+                api.create(&PostParams::default(), &review),
+            )
+            .await
+            {
                 Ok(Ok(r)) => r.status.map(|s| s.allowed).unwrap_or(false),
                 // If the check itself fails we optimistically allow; the API server
                 // will still reject unauthorised requests.
@@ -111,12 +116,17 @@ pub async fn rules_review(conn: &ClusterConn, namespace: &str) -> AppResult<Rule
     validate::namespace(namespace)?;
     let api: Api<SelfSubjectRulesReview> = Api::all(conn.client.clone());
     let review = SelfSubjectRulesReview {
-        spec: SelfSubjectRulesReviewSpec { namespace: Some(namespace.into()) },
+        spec: SelfSubjectRulesReviewSpec {
+            namespace: Some(namespace.into()),
+        },
         ..Default::default()
     };
-    let res = tokio::time::timeout(Duration::from_secs(15), api.create(&PostParams::default(), &review))
-        .await
-        .map_err(|_| crate::error::AppError::Connection("rules review timed out".into()))??;
+    let res = tokio::time::timeout(
+        Duration::from_secs(15),
+        api.create(&PostParams::default(), &review),
+    )
+    .await
+    .map_err(|_| crate::error::AppError::Connection("rules review timed out".into()))??;
     let status = res.status.unwrap_or_default();
     Ok(RulesReview {
         namespace: namespace.into(),

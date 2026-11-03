@@ -8,7 +8,11 @@ use super::Db;
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ClusterSource {
     /// References a context inside a kubeconfig file on disk. The file itself is
     /// never copied; it stays under the user's control.
@@ -130,8 +134,11 @@ impl Db {
     }
 
     pub fn get_cluster(&self, id: &str) -> AppResult<ClusterProfile> {
-        self.with(|c| c.query_row("SELECT * FROM clusters WHERE id = ?1", [id], from_row).optional())?
-            .ok_or_else(|| AppError::NotFound(format!("cluster {id}")))
+        self.with(|c| {
+            c.query_row("SELECT * FROM clusters WHERE id = ?1", [id], from_row)
+                .optional()
+        })?
+        .ok_or_else(|| AppError::NotFound(format!("cluster {id}")))
     }
 
     pub fn insert_cluster(&self, p: &ClusterProfile) -> AppResult<()> {
@@ -211,7 +218,12 @@ impl Db {
 
     pub fn touch_cluster_connected(&self, id: &str) -> AppResult<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        self.with(|c| c.execute("UPDATE clusters SET last_connected_at=?2 WHERE id=?1", params![id, now]))?;
+        self.with(|c| {
+            c.execute(
+                "UPDATE clusters SET last_connected_at=?2 WHERE id=?1",
+                params![id, now],
+            )
+        })?;
         Ok(())
     }
 
@@ -236,7 +248,10 @@ mod tests {
         ClusterProfile {
             id: id.into(),
             name: format!("cluster {id}"),
-            source: ClusterSource::Kubeconfig { path: "/home/u/.kube/config".into(), context: "kind".into() },
+            source: ClusterSource::Kubeconfig {
+                path: "/home/u/.kube/config".into(),
+                context: "kind".into(),
+            },
             group: None,
             favorite: false,
             color: None,
@@ -256,11 +271,20 @@ mod tests {
         db.insert_cluster(&sample("b")).unwrap();
         assert_eq!(db.list_clusters().unwrap().len(), 2);
         let updated = db
-            .update_cluster("a", ClusterPatch { favorite: Some(true), group: Some(Some("prod".into())), ..Default::default() })
+            .update_cluster(
+                "a",
+                ClusterPatch {
+                    favorite: Some(true),
+                    group: Some(Some("prod".into())),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         assert!(updated.favorite);
         assert_eq!(db.list_clusters().unwrap()[0].id, "a");
-        assert!(db.cluster_exists_for_kubeconfig("/home/u/.kube/config", "kind").unwrap());
+        assert!(db
+            .cluster_exists_for_kubeconfig("/home/u/.kube/config", "kind")
+            .unwrap());
         db.delete_cluster("a").unwrap();
         assert!(db.get_cluster("a").is_err());
     }
@@ -283,6 +307,14 @@ mod tests {
     fn rejects_unknown_environment() {
         let db = Db::open_in_memory().unwrap();
         db.insert_cluster(&sample("a")).unwrap();
-        assert!(db.update_cluster("a", ClusterPatch { environment: Some("prd".into()), ..Default::default() }).is_err());
+        assert!(db
+            .update_cluster(
+                "a",
+                ClusterPatch {
+                    environment: Some("prd".into()),
+                    ..Default::default()
+                }
+            )
+            .is_err());
     }
 }

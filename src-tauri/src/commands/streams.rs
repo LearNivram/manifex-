@@ -18,7 +18,12 @@ pub async fn logs_start(
     on_event: Channel<LogMessage>,
 ) -> AppResult<String> {
     let conn = state.conn(&cluster_id)?;
-    state.logs.start(conn.client.clone(), &namespace, &pod, options, move |m| on_event.send(m).is_ok()).await
+    state
+        .logs
+        .start(conn.client.clone(), &namespace, &pod, options, move |m| {
+            on_event.send(m).is_ok()
+        })
+        .await
 }
 
 #[tauri::command]
@@ -60,7 +65,10 @@ pub async fn exec_start(
                 resource: Some("Pod".into()),
                 namespace: Some(namespace.clone()),
                 name: Some(pod.clone()),
-                detail: Some(format!("container={} shell={shell}", container.clone().unwrap_or_default())),
+                detail: Some(format!(
+                    "container={} shell={shell}",
+                    container.clone().unwrap_or_default()
+                )),
             },
             exec.start(
                 conn.client.clone(),
@@ -75,12 +83,21 @@ pub async fn exec_start(
 }
 
 #[tauri::command]
-pub async fn exec_write(state: State<'_, AppState>, session_id: String, data: String) -> AppResult<()> {
+pub async fn exec_write(
+    state: State<'_, AppState>,
+    session_id: String,
+    data: String,
+) -> AppResult<()> {
     state.exec.write(&session_id, data.into_bytes()).await
 }
 
 #[tauri::command]
-pub async fn exec_resize(state: State<'_, AppState>, session_id: String, cols: u16, rows: u16) -> AppResult<()> {
+pub async fn exec_resize(
+    state: State<'_, AppState>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> AppResult<()> {
     state.exec.resize(&session_id, cols, rows).await
 }
 

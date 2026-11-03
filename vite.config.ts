@@ -16,6 +16,10 @@ export default defineConfig({
       // monaco-editor >= 0.55 changed its package exports; monaco-yaml still deep-imports
       // `monaco-editor/esm/vs/...`, so map those paths onto the real files.
       {
+        find: /^monaco-worker-manager\/worker$/,
+        replacement: path.resolve(import.meta.dirname, "src/features/editor/workerManagerShim.ts"),
+      },
+      {
         find: /^monaco-editor\/esm\/vs\/(.+?)(\.js)?(\?.*)?$/,
         replacement: path.resolve(import.meta.dirname, "node_modules/monaco-editor/esm/vs") + "/$1.js$3",
       },
@@ -37,6 +41,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 4096,
   },
   worker: { format: "es" },
+  optimizeDeps: { exclude: ["monaco-yaml", "monaco-worker-manager"] },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

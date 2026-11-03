@@ -25,7 +25,10 @@ use parking_lot::Mutex;
 fn e2e_config() -> Option<(String, String)> {
     let path = std::env::var("MANIFEX_E2E_KUBECONFIG").ok()?;
     let kc = kubeconfig::read_kubeconfig(std::path::Path::new(&path)).expect("readable kubeconfig");
-    let ctx = std::env::var("MANIFEX_E2E_CONTEXT").ok().or(kc.current_context.clone()).expect("context");
+    let ctx = std::env::var("MANIFEX_E2E_CONTEXT")
+        .ok()
+        .or(kc.current_context.clone())
+        .expect("context");
     Some((path, ctx))
 }
 
@@ -95,7 +98,10 @@ async fn full_cluster_workflow() {
     let profile = ClusterProfile {
         id: "e2e".into(),
         name: "e2e".into(),
-        source: ClusterSource::Kubeconfig { path: path.clone(), context: context.clone() },
+        source: ClusterSource::Kubeconfig {
+            path: path.clone(),
+            context: context.clone(),
+        },
         group: None,
         favorite: false,
         color: None,
@@ -111,21 +117,35 @@ async fn full_cluster_workflow() {
     assert!(test.ok, "connection test failed: {:?}", test.message);
     let status = mgr.connect("e2e").await.expect("connect");
     assert_eq!(status.state, ConnState::Connected);
-    println!("connected to {} as {:?}", status.version.unwrap_or_default(), status.identity);
+    println!(
+        "connected to {} as {:?}",
+        status.version.unwrap_or_default(),
+        status.identity
+    );
     let conn = mgr.get("e2e").unwrap();
     let client = conn.client.clone();
 
     // --- discovery
     let disco = conn.discovery(false).await.unwrap();
     let resources = manifex_lib::k8s::resources::list_api_resources(&disco);
-    assert!(resources.iter().any(|r| r.kind == "Deployment" && r.group == "apps"));
+    assert!(resources
+        .iter()
+        .any(|r| r.kind == "Deployment" && r.group == "apps"));
 
     // --- server-side apply (dry run, then real)
     let manifest = MANIFEST.replace("NS", &ns);
-    let dry = ops::apply_manifests(&conn, &manifest, None, ApplyMode::Apply, true, false).await.unwrap();
+    let dry = ops::apply_manifests(&conn, &manifest, None, ApplyMode::Apply, true, false)
+        .await
+        .unwrap();
     assert_eq!(dry.len(), 3);
-    assert!(dry.iter().all(|r| r.error.is_none() || r.kind != "Namespace"), "{dry:?}");
-    let applied = ops::apply_manifests(&conn, &manifest, None, ApplyMode::Apply, false, false).await.unwrap();
+    assert!(
+        dry.iter()
+            .all(|r| r.error.is_none() || r.kind != "Namespace"),
+        "{dry:?}"
+    );
+    let applied = ops::apply_manifests(&conn, &manifest, None, ApplyMode::Apply, false, false)
+        .await
+        .unwrap();
     assert!(applied.iter().all(|r| r.error.is_none()), "{applied:?}");
     assert_eq!(applied[2].action, "created");
 
@@ -140,7 +160,10 @@ async fn full_cluster_workflow() {
     )
     .await
     .unwrap();
-    assert!(bad[0].error.is_some(), "strict field validation should reject unknown fields");
+    assert!(
+        bad[0].error.is_some(),
+        "strict field validation should reject unknown fields"
+    );
 
     // --- watch pods
     let watches = WatchManager::new();
@@ -160,12 +183,25 @@ async fn full_cluster_workflow() {
         })
         .unwrap();
     let running = wait_until(Duration::from_secs(180), || {
-        watches.cached_rows(&key).map(|rows| rows.iter().any(|r| r.status == "Running" && r.health == Health::Ok)).unwrap_or(false)
+        watches
+            .cached_rows(&key)
+            .map(|rows| {
+                rows.iter()
+                    .any(|r| r.status == "Running" && r.health == Health::Ok)
+            })
+            .unwrap_or(false)
     })
     .await;
-    assert!(running, "pod did not become Running; messages: {}", messages.lock().len());
+    assert!(
+        running,
+        "pod did not become Running; messages: {}",
+        messages.lock().len()
+    );
     let pod_name = watches.cached_rows(&key).unwrap()[0].name.clone();
-    assert!(messages.lock().iter().any(|m| matches!(m, WatchMessage::Snapshot { .. })));
+    assert!(messages
+        .lock()
+        .iter()
+        .any(|m| matches!(m, WatchMessage::Snapshot { .. })));
 
     // --- logs
     let logs = LogManager::default();
@@ -176,7 +212,11 @@ async fn full_cluster_workflow() {
             client.clone(),
             &ns,
             &pod_name,
-            LogOptions { follow: true, tail_lines: Some(10), ..Default::default() },
+            LogOptions {
+                follow: true,
+                tail_lines: Some(10),
+                ..Default::default()
+            },
             move |m| {
                 if let LogMessage::Lines { lines } = m {
                     sink_lines.lock().extend(lines);
@@ -186,7 +226,13 @@ async fn full_cluster_workflow() {
         )
         .await
         .unwrap();
-    assert!(wait_until(Duration::from_secs(20), || lines.lock().iter().any(|l| l.starts_with("tick"))).await);
+    assert!(
+        wait_until(Duration::from_secs(20), || lines
+            .lock()
+            .iter()
+            .any(|l| l.starts_with("tick")))
+        .await
+    );
     logs.stop(&log_id);
 
     // --- exec
@@ -198,7 +244,15 @@ async fn full_cluster_workflow() {
     let session = exec
         .start(
             client.clone(),
-            ExecTarget { cluster_id: "e2e", namespace: &ns, pod: &pod_name, container: Some("main"), shell: "sh", cols: 80, rows: 24 },
+            ExecTarget {
+                cluster_id: "e2e",
+                namespace: &ns,
+                pod: &pod_name,
+                container: Some("main"),
+                shell: "sh",
+                cols: 80,
+                rows: 24,
+            },
             move |d| {
                 out.lock().extend(d);
                 true
@@ -208,20 +262,36 @@ async fn full_cluster_workflow() {
         .await
         .unwrap();
     exec.resize(&session, 120, 40).await.unwrap();
-    exec.write(&session, b"echo manifex-$((40+2))\n".to_vec()).await.unwrap();
-    let ok = wait_until(Duration::from_secs(15), || String::from_utf8_lossy(&output.lock()).contains("manifex-42")).await;
-    assert!(ok, "exec output: {:?} exit: {:?}", String::from_utf8_lossy(&output.lock()), exited.lock());
+    exec.write(&session, b"echo manifex-$((40+2))\n".to_vec())
+        .await
+        .unwrap();
+    let ok = wait_until(Duration::from_secs(15), || {
+        String::from_utf8_lossy(&output.lock()).contains("manifex-42")
+    })
+    .await;
+    assert!(
+        ok,
+        "exec output: {:?} exit: {:?}",
+        String::from_utf8_lossy(&output.lock()),
+        exited.lock()
+    );
     exec.write(&session, b"exit 3\n".to_vec()).await.unwrap();
     assert!(wait_until(Duration::from_secs(15), || exited.lock().is_some()).await);
     println!("exec exit: {:?}", exited.lock());
 
     // --- scale, restart, history, rollback
-    ops::scale(client.clone(), &builtin::deployments(), &ns, "echo", 2).await.unwrap();
-    ops::restart(client.clone(), &builtin::deployments(), &ns, "echo").await.unwrap();
+    ops::scale(client.clone(), &builtin::deployments(), &ns, "echo", 2)
+        .await
+        .unwrap();
+    ops::restart(client.clone(), &builtin::deployments(), &ns, "echo")
+        .await
+        .unwrap();
     let got_two_revisions = {
         let mut ok = false;
         for _ in 0..60 {
-            let h = ops::rollout_history(client.clone(), &ns, "echo").await.unwrap();
+            let h = ops::rollout_history(client.clone(), &ns, "echo")
+                .await
+                .unwrap();
             // wait until the controller has marked the newest revision as current
             if h.len() >= 2 && h[0].current {
                 ok = true;
@@ -232,28 +302,67 @@ async fn full_cluster_workflow() {
         ok
     };
     assert!(got_two_revisions, "restart should create a second revision");
-    let history = ops::rollout_history(client.clone(), &ns, "echo").await.unwrap();
+    let history = ops::rollout_history(client.clone(), &ns, "echo")
+        .await
+        .unwrap();
     let old = history.iter().find(|r| !r.current).unwrap();
-    ops::rollback(client.clone(), &ns, "echo", old.revision).await.unwrap();
-    let view = ops::get_object(client.clone(), &builtin::deployments(), Some(&ns), "echo").await.unwrap();
+    ops::rollback(client.clone(), &ns, "echo", old.revision)
+        .await
+        .unwrap();
+    let view = ops::get_object(client.clone(), &builtin::deployments(), Some(&ns), "echo")
+        .await
+        .unwrap();
     assert!(!view.yaml.contains("managedFields"));
     assert_eq!(view.object["spec"]["replicas"], 2);
 
     // --- replace with optimistic concurrency
-    let mut cm = ops::get_object(client.clone(), &builtin::configmaps(), Some(&ns), "settings").await.unwrap().object;
+    let mut cm = ops::get_object(
+        client.clone(),
+        &builtin::configmaps(),
+        Some(&ns),
+        "settings",
+    )
+    .await
+    .unwrap()
+    .object;
     cm["data"]["greeting"] = serde_json::json!("hi");
-    let replaced = ops::apply_manifests(&conn, &serde_yaml::to_string(&cm).unwrap(), None, ApplyMode::Replace, false, false)
-        .await
-        .unwrap();
+    let replaced = ops::apply_manifests(
+        &conn,
+        &serde_yaml::to_string(&cm).unwrap(),
+        None,
+        ApplyMode::Replace,
+        false,
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(replaced[0].action, "replaced", "{replaced:?}");
-    let stale = ops::apply_manifests(&conn, &serde_yaml::to_string(&cm).unwrap(), None, ApplyMode::Replace, false, false)
-        .await
-        .unwrap();
-    assert!(stale[0].error.is_some(), "stale resourceVersion must conflict");
+    let stale = ops::apply_manifests(
+        &conn,
+        &serde_yaml::to_string(&cm).unwrap(),
+        None,
+        ApplyMode::Replace,
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        stale[0].error.is_some(),
+        "stale resourceVersion must conflict"
+    );
 
     // --- cleanup
     watches.unsubscribe(&sub);
-    ops::delete_object(client.clone(), &builtin::namespaces(), None, &ns, &DeleteOptions::default()).await.unwrap();
+    ops::delete_object(
+        client.clone(),
+        &builtin::namespaces(),
+        None,
+        &ns,
+        &DeleteOptions::default(),
+    )
+    .await
+    .unwrap();
     mgr.disconnect("e2e");
     assert!(mgr.get("e2e").is_err());
 }
@@ -304,7 +413,8 @@ async fn agent_connection_with_exec() {
     let db = Arc::new(Db::open_in_memory().unwrap());
     let vault = Arc::new(SecretVault::with_key([5u8; 32]));
     let token = std::fs::read_to_string(&token_file).unwrap();
-    db.put_secret(&vault, "agent-tok", token.trim().as_bytes()).unwrap();
+    db.put_secret(&vault, "agent-tok", token.trim().as_bytes())
+        .unwrap();
     let mgr = ClusterManager::new(db.clone(), vault, Arc::new(NullSink));
     let profile = ClusterProfile {
         id: "agent".into(),
@@ -332,10 +442,24 @@ async fn agent_connection_with_exec() {
     let client = mgr.get("agent").unwrap().client.clone();
 
     // a running pod in kube-system to exec into
-    let pods = ops::list_objects(client.clone(), &builtin::pods(), Some("kube-system"), None, Some("status.phase=Running"), None).await.unwrap();
+    let pods = ops::list_objects(
+        client.clone(),
+        &builtin::pods(),
+        Some("kube-system"),
+        None,
+        Some("status.phase=Running"),
+        None,
+    )
+    .await
+    .unwrap();
     let pod = pods
         .iter()
-        .find(|p| p["metadata"]["name"].as_str().unwrap_or("").starts_with("local-path-provisioner"))
+        .find(|p| {
+            p["metadata"]["name"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("local-path-provisioner")
+        })
         .expect("local-path-provisioner pod");
     let name = pod["metadata"]["name"].as_str().unwrap().to_string();
 
@@ -345,7 +469,15 @@ async fn agent_connection_with_exec() {
     let session = exec
         .start(
             client,
-            ExecTarget { cluster_id: "agent", namespace: "kube-system", pod: &name, container: None, shell: "sh", cols: 80, rows: 24 },
+            ExecTarget {
+                cluster_id: "agent",
+                namespace: "kube-system",
+                pod: &name,
+                container: None,
+                shell: "sh",
+                cols: 80,
+                rows: 24,
+            },
             move |d| {
                 out.lock().extend(d);
                 true
@@ -354,8 +486,17 @@ async fn agent_connection_with_exec() {
         )
         .await
         .expect("exec through agent");
-    exec.write(&session, b"echo via-agent-$((6*7))\n".to_vec()).await.unwrap();
-    let ok = wait_until(Duration::from_secs(15), || String::from_utf8_lossy(&output.lock()).contains("via-agent-42")).await;
-    assert!(ok, "exec output through agent: {:?}", String::from_utf8_lossy(&output.lock()));
+    exec.write(&session, b"echo via-agent-$((6*7))\n".to_vec())
+        .await
+        .unwrap();
+    let ok = wait_until(Duration::from_secs(15), || {
+        String::from_utf8_lossy(&output.lock()).contains("via-agent-42")
+    })
+    .await;
+    assert!(
+        ok,
+        "exec output through agent: {:?}",
+        String::from_utf8_lossy(&output.lock())
+    );
     exec.close(&session);
 }
