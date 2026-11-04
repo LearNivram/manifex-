@@ -33,7 +33,17 @@ export type ClusterSource =
   | { type: "storedKubeconfig"; context: string; secretId: string }
   | { type: "token"; server: string; caPem?: string | null; tlsServerName?: string | null; proxyUrl?: string | null; secretId: string }
   | { type: "certificate"; server: string; caPem?: string | null; tlsServerName?: string | null; proxyUrl?: string | null; secretId: string }
-  | { type: "agent"; endpoint: string; caPem?: string | null; proxyUrl?: string | null; secretId: string };
+  | { type: "agent"; endpoint: string; caPem?: string | null; proxyUrl?: string | null; secretId: string }
+  | {
+      type: "ssh";
+      host: string;
+      port: number;
+      user: string;
+      hostKeyFingerprint: string;
+      context?: string | null;
+      kubeconfigSource?: string | null;
+      secretId: string;
+    };
 
 export type Environment = "development" | "staging" | "production" | "other";
 
@@ -376,4 +386,28 @@ export interface AccessCheck {
   subresource?: string;
   namespace?: string;
   name?: string;
+}
+
+export interface SshKeyInfo {
+  path: string;
+  encrypted: boolean;
+  algorithm: string;
+  hasCertificate: boolean;
+}
+
+export interface HostKeyInfo {
+  fingerprint: string;
+  algorithm: string;
+  knownHosts: "trusted" | "unknown" | "changed";
+}
+
+export interface SshTestResult {
+  ok: boolean;
+  message?: string | null;
+  kubeconfigSource?: string | null;
+  contexts: string[];
+  context?: string | null;
+  version?: string | null;
+  identity?: string | null;
+  latencyMs: number;
 }

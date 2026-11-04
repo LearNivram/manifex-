@@ -16,7 +16,10 @@ fn cli(state: &AppState) -> AppResult<HelmCli> {
 fn kubeconfig_for(state: &AppState, cluster_id: &str) -> AppResult<HelmKubeconfig> {
     // Helm operations require an active connection so the user sees which
     // cluster they act on, and the same credentials are used.
-    state.conn(cluster_id)?;
+    let conn = state.conn(cluster_id)?;
+    if let Some(ssh) = &conn.ssh {
+        return HelmKubeconfig::from_yaml(&ssh.kubeconfig_yaml, &ssh.context);
+    }
     let profile = state.db.get_cluster(cluster_id)?;
     let secret = state.clusters.load_secret(&profile.source)?;
     HelmKubeconfig::for_source(&profile.source, secret)

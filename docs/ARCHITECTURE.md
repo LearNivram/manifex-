@@ -66,6 +66,7 @@ the React frontend renders state and sends intents over Tauri's IPC bridge.
 | `token` | encrypted vault | Bearer token, optional CA / TLS server name / proxy. |
 | `certificate` | encrypted vault | Client certificate + key. |
 | `agent` | encrypted vault | HTTPS endpoint of a Manifex agent (see `agent/`) or another authenticating Kubernetes API gateway. |
+| `ssh` | encrypted vault (key, certificate, passphrase, password, last kubeconfig) | Logs in to an SSH server (OpenSSH certificate → public key → password, host key pinned), fetches the kubeconfig there (kubectl, ~/.kube/config, k3s, RKE2, kubeadm, MicroK8s, with `sudo` if needed) on every connect and tunnels the API through `direct-tcpip` channels from a local 127.0.0.1 port. TLS is still verified against the API server's real name. |
 
 Health: every connected cluster is probed (`/version`) every *n* seconds
 (configurable). On failure the state becomes `reconnecting`, a notification is

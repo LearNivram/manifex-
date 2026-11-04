@@ -13,6 +13,7 @@ pub mod quantity;
 pub mod rbac;
 pub mod resources;
 pub mod schema;
+pub mod ssh;
 pub mod summary;
 pub mod watch;
 

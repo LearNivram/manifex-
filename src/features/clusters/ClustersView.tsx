@@ -32,6 +32,7 @@ const SOURCE_LABEL: Record<string, string> = {
   token: "token",
   certificate: "certificate",
   agent: "agent",
+  ssh: "via SSH",
 };
 
 async function refreshClusters() {
@@ -181,7 +182,7 @@ function ClusterCard({ c, onEdit, compareSel, onCompareToggle }: { c: ClusterVie
               <Star className={cn("size-3.5", c.profile.favorite ? "fill-warn text-warn" : "text-subtle opacity-0 group-hover:opacity-100")} />
             </button>
           </div>
-          <span className="truncate text-[12px] text-muted">{st?.server ?? ("server" in c.profile.source ? c.profile.source.server : "context" in c.profile.source ? c.profile.source.context : "")}</span>
+          <span className="truncate text-[12px] text-muted">{c.profile.source.type === "ssh" ? `${c.profile.source.user}@${c.profile.source.host}${c.profile.source.port !== 22 ? `:${c.profile.source.port}` : ""} · ${c.profile.source.kubeconfigSource ?? "ssh"}` : st?.server ?? ("server" in c.profile.source ? c.profile.source.server : "context" in c.profile.source ? c.profile.source.context : "")}</span>
         </div>
         <Menu>
           <MenuTrigger asChild>

@@ -35,6 +35,20 @@ pub enum ClusterSource {
         proxy_url: Option<String>,
         secret_id: String,
     },
+    /// Connection via an SSH server that can reach the cluster: Manifex logs in,
+    /// fetches the kubeconfig from the server and tunnels the API through SSH.
+    Ssh {
+        host: String,
+        port: u16,
+        user: String,
+        /// Pinned SHA256 host key fingerprint (verified on every connect).
+        host_key_fingerprint: String,
+        /// kubeconfig context on the server (None = current context).
+        context: Option<String>,
+        /// Where the kubeconfig was found (informational).
+        kubeconfig_source: Option<String>,
+        secret_id: String,
+    },
     /// Connection through a Manifex agent / authenticating gateway that exposes the
     /// Kubernetes API of a remote (e.g. private) cluster.
     Agent {
@@ -52,7 +66,8 @@ impl ClusterSource {
             ClusterSource::StoredKubeconfig { secret_id, .. }
             | ClusterSource::Token { secret_id, .. }
             | ClusterSource::Certificate { secret_id, .. }
-            | ClusterSource::Agent { secret_id, .. } => Some(secret_id),
+            | ClusterSource::Agent { secret_id, .. }
+            | ClusterSource::Ssh { secret_id, .. } => Some(secret_id),
         }
     }
 
@@ -63,6 +78,7 @@ impl ClusterSource {
             ClusterSource::Token { .. } => "token",
             ClusterSource::Certificate { .. } => "certificate",
             ClusterSource::Agent { .. } => "agent",
+            ClusterSource::Ssh { .. } => "ssh",
         }
     }
 }

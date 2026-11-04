@@ -384,6 +384,9 @@ pub fn resolve_kubeconfig(
         String::from_utf8(bytes).map_err(|_| AppError::Vault("credentials are corrupt".into()))
     };
     match source {
+        ClusterSource::Ssh { .. } => Err(AppError::internal(
+            "SSH profiles are resolved through an SSH session (k8s::ssh)",
+        )),
         ClusterSource::Kubeconfig { path, context } => {
             Ok((read_kubeconfig(Path::new(path))?, context.clone()))
         }
@@ -469,6 +472,12 @@ pub async fn build_config(
     secret: Option<Vec<u8>>,
 ) -> AppResult<kube::Config> {
     let (kc, context) = resolve_kubeconfig(source, secret)?;
+    build_config_from(kc, context).await
+}
+
+/// Builds a client configuration from an in-memory kubeconfig. TLS verification
+/// is always enforced.
+pub async fn build_config_from(kc: Kubeconfig, context: String) -> AppResult<kube::Config> {
     ensure_secure(&kc, &context)?;
     let options = KubeConfigOptions {
         context: Some(context),

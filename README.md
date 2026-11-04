@@ -10,8 +10,10 @@ logs, metrics, RBAC) and runs on Windows, macOS and Linux.
 ## Highlights
 
 - **Multi-cluster** – kubeconfig discovery & import, direct token / client
-  certificate connections, and agent-based access to private clusters
-  ([`agent/`](agent/)). Favourites, groups, environment tags, per-cluster colours,
+  certificate connections, **"via SSH server"** (log in with your SSH key /
+  OpenSSH certificate / password – Manifex fetches the kubeconfig from the server
+  and tunnels the API, nothing to install remotely) and agent-based access to
+  private clusters ([`agent/`](agent/)). Favourites, groups, environment tags, per-cluster colours,
   several windows side by side, cross-cluster search and cluster comparison.
 - **Wrong-cluster protection** – the active cluster and its environment are always
   visible (title bar stripe, badge, status bar, every confirmation). Destructive

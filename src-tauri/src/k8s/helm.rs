@@ -301,6 +301,26 @@ pub enum HelmKubeconfig {
 }
 
 impl HelmKubeconfig {
+    /// Temporary kubeconfig from YAML (e.g. the tunnel kubeconfig of an SSH profile).
+    pub fn from_yaml(yaml: &str, context: &str) -> AppResult<Self> {
+        let mut file = tempfile::Builder::new()
+            .prefix("manifex-kc-")
+            .suffix(".yaml")
+            .tempfile()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600))?;
+        }
+        use std::io::Write;
+        file.write_all(yaml.as_bytes())?;
+        file.flush()?;
+        Ok(Self::Temp {
+            file,
+            context: context.to_string(),
+        })
+    }
+
     pub fn for_source(source: &ClusterSource, secret: Option<Vec<u8>>) -> AppResult<Self> {
         match source {
             ClusterSource::Kubeconfig { path, context } => Ok(Self::Path {

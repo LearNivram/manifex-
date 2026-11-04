@@ -83,6 +83,26 @@ pub struct ClusterConn {
     discovery: tokio::sync::RwLock<Option<(Arc<Discovery>, Instant)>>,
     pub access_cache: DashMap<String, (bool, Instant)>,
     health_task: RwLock<Option<AbortHandle>>,
+    /// SSH tunnel + rewritten kubeconfig for "via SSH" profiles (kept alive for
+    /// the lifetime of the connection).
+    pub ssh: Option<SshRuntime>,
+}
+
+pub struct SshRuntime {
+    pub tunnel: super::ssh::SshTunnel,
+    /// kubeconfig pointing at the local tunnel (used for the Helm CLI).
+    pub kubeconfig_yaml: String,
+    pub context: String,
+    pub source: String,
+}
+
+/// A built client plus, for SSH profiles, the session that carries it.
+pub struct BuiltClient {
+    pub client: Client,
+    pub config: kube::Config,
+    pub ssh: Option<SshRuntime>,
+    /// Freshly fetched kubeconfig to persist into the vault.
+    pub refreshed_secret: Option<Vec<u8>>,
 }
 
 impl ClusterConn {
@@ -213,14 +233,9 @@ impl ClusterManager {
         }
     }
 
-    pub async fn build_client(
-        &self,
-        profile: &ClusterProfile,
-    ) -> AppResult<(Client, kube::Config)> {
+    pub async fn build_client(&self, profile: &ClusterProfile) -> AppResult<BuiltClient> {
         let secret = self.load_secret(&profile.source)?;
-        let config = kubeconfig::build_config(&profile.source, secret).await?;
-        let client = Client::try_from(config.clone())?;
-        Ok((client, config))
+        build_from_source(&profile.source, secret).await
     }
 
     /// Tests a stored profile without registering a connection.
@@ -249,11 +264,9 @@ impl ClusterManager {
         secret: Option<Vec<u8>>,
     ) -> AppResult<ConnectionTestResult> {
         let start = Instant::now();
-        let built = async {
-            let config = kubeconfig::build_config(&profile.source, secret).await?;
-            Ok::<_, AppError>((Client::try_from(config)?, ()))
-        };
-        let (client, _) = match built.await {
+        let built = build_from_source(&profile.source, secret).await;
+        // keep the SSH tunnel (if any) alive until the test finished
+        let (client, _ssh) = match built.map(|b| (b.client, b.ssh)) {
             Ok(c) => c,
             Err(e) => {
                 return Ok(ConnectionTestResult {
@@ -302,23 +315,23 @@ impl ClusterManager {
         self.set_status(ClusterStatus::new(&profile, ConnState::Connecting, None));
 
         let result: AppResult<(
-            Client,
-            kube::Config,
+            BuiltClient,
             k8s_openapi::apimachinery::pkg::version::Info,
             u64,
         )> = async {
-            let (client, config) = self.build_client(&profile).await?;
+            let built = self.build_client(&profile).await?;
             let start = Instant::now();
-            let info = tokio::time::timeout(Duration::from_secs(15), client.apiserver_version())
-                .await
-                .map_err(|_| {
-                    AppError::Connection("API server did not respond within 15s".into())
-                })??;
-            Ok((client, config, info, start.elapsed().as_millis() as u64))
+            let info =
+                tokio::time::timeout(Duration::from_secs(15), built.client.apiserver_version())
+                    .await
+                    .map_err(|_| {
+                        AppError::Connection("API server did not respond within 15s".into())
+                    })??;
+            Ok((built, info, start.elapsed().as_millis() as u64))
         }
         .await;
 
-        let (client, config, info, latency) = match result {
+        let (built, info, latency) = match result {
             Ok(v) => v,
             Err(e) => {
                 self.set_status(ClusterStatus::new(
@@ -330,9 +343,32 @@ impl ClusterManager {
             }
         };
 
+        let BuiltClient {
+            client,
+            config,
+            ssh,
+            refreshed_secret,
+        } = built;
+        if let (Some(bytes), Some(sid)) = (refreshed_secret, profile.source.secret_id()) {
+            if let Err(e) = self.db.put_secret(&self.vault, sid, &bytes) {
+                tracing::warn!(error = %e, "could not store refreshed kubeconfig");
+            }
+        }
         let identity = whoami(&client).await;
         let mut status = ClusterStatus::new(&profile, ConnState::Connected, None);
-        status.server = Some(config.cluster_url.to_string());
+        status.server = Some(match &profile.source {
+            ClusterSource::Ssh {
+                host, port, user, ..
+            } => {
+                let port = if *port == 22 {
+                    String::new()
+                } else {
+                    format!(":{port}")
+                };
+                format!("ssh://{user}@{host}{port}")
+            }
+            _ => config.cluster_url.to_string(),
+        });
         status.version = Some(info.git_version.clone());
         status.platform = Some(info.platform.clone());
         status.identity = identity;
@@ -352,6 +388,7 @@ impl ClusterManager {
             discovery: tokio::sync::RwLock::new(None),
             access_cache: DashMap::new(),
             health_task: RwLock::new(None),
+            ssh,
         });
 
         let handle = tokio::spawn(Self::health_loop(
@@ -477,4 +514,65 @@ impl ClusterManager {
             }
         }
     }
+}
+
+/// Builds a Kubernetes client for any cluster source. SSH sources establish an
+/// SSH session, refresh the kubeconfig from the server and tunnel the API.
+pub async fn build_from_source(
+    source: &ClusterSource,
+    secret: Option<Vec<u8>>,
+) -> AppResult<BuiltClient> {
+    if let ClusterSource::Ssh {
+        host,
+        port,
+        user,
+        host_key_fingerprint,
+        context,
+        ..
+    } = source
+    {
+        let bytes = secret
+            .ok_or_else(|| AppError::Vault("SSH credentials missing for this cluster".into()))?;
+        let mut creds: super::ssh::SshCredentials = serde_json::from_slice(&bytes)
+            .map_err(|_| AppError::Vault("SSH credentials are corrupt".into()))?;
+        let target = super::ssh::SshTarget {
+            host: host.clone(),
+            port: *port,
+            user: user.clone(),
+        };
+        let session =
+            super::ssh::establish(&target, &creds, host_key_fingerprint, context.as_deref())
+                .await?;
+        let refreshed_secret = match &session.fetched_kubeconfig {
+            Some(fresh) if creds.kubeconfig.as_deref() != Some(fresh.as_str()) => {
+                creds.kubeconfig = Some(fresh.clone());
+                Some(serde_json::to_vec(&creds)?)
+            }
+            _ => None,
+        };
+        let kubeconfig_yaml = kubeconfig::kubeconfig_to_yaml_with_secrets(&session.kubeconfig)?;
+        let config =
+            kubeconfig::build_config_from(session.kubeconfig.clone(), session.context.clone())
+                .await?;
+        let client = Client::try_from(config.clone())?;
+        return Ok(BuiltClient {
+            client,
+            config,
+            ssh: Some(SshRuntime {
+                tunnel: session.tunnel,
+                kubeconfig_yaml,
+                context: session.context,
+                source: session.source,
+            }),
+            refreshed_secret,
+        });
+    }
+    let config = kubeconfig::build_config(source, secret).await?;
+    let client = Client::try_from(config.clone())?;
+    Ok(BuiltClient {
+        client,
+        config,
+        ssh: None,
+        refreshed_secret: None,
+    })
 }

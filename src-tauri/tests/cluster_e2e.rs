@@ -500,3 +500,177 @@ async fn agent_connection_with_exec() {
     );
     exec.close(&session);
 }
+
+/// "Via SSH server" connections. Skipped unless MANIFEX_E2E_SSH_HOST is set.
+///   MANIFEX_E2E_SSH_HOST / _PORT / _USER, _KEY (private key file, cert at <key>-cert.pub),
+///   _PASSPHRASE, _PASSWORD (login / sudo)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ssh_connection_fetches_kubeconfig_and_tunnels() {
+    use manifex_lib::k8s::connection::build_from_source;
+    use manifex_lib::k8s::ssh::{self, SshCredentials, SshTarget};
+    let Ok(host) = std::env::var("MANIFEX_E2E_SSH_HOST") else {
+        eprintln!("MANIFEX_E2E_SSH_HOST not set – skipping");
+        return;
+    };
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let target = SshTarget {
+        host,
+        port: env("MANIFEX_E2E_SSH_PORT")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(22),
+        user: env("MANIFEX_E2E_SSH_USER").unwrap_or_else(|| "root".into()),
+    };
+
+    // 1. host key probe (no credentials are sent)
+    let hk = ssh::probe_host_key(&target).await.expect("probe host key");
+    println!("host key {} ({:?})", hk.fingerprint, hk.known_hosts);
+    assert!(hk.fingerprint.starts_with("SHA256:"));
+
+    let (key, cert) = match env("MANIFEX_E2E_SSH_KEY") {
+        Some(p) => {
+            let (k, c) = ssh::read_key_file(std::path::Path::new(&p)).expect("key file");
+            (Some(k), c)
+        }
+        None => (None, None),
+    };
+    let password = env("MANIFEX_E2E_SSH_PASSWORD");
+
+    // 2. a wrong pinned fingerprint is refused
+    let creds = SshCredentials {
+        private_key: key.clone(),
+        passphrase: env("MANIFEX_E2E_SSH_PASSPHRASE"),
+        certificate: cert.clone(),
+        password: password.clone(),
+        kubeconfig: None,
+    };
+    let wrong = ssh::establish(
+        &target,
+        &creds,
+        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        None,
+    )
+    .await;
+    assert!(
+        matches!(wrong, Err(manifex_lib::error::AppError::Security(_))),
+        "pinned key mismatch must be refused"
+    );
+
+    // 3. key/certificate login (+ sudo password), kubeconfig fetched from the server, API via tunnel
+    let run = |creds: SshCredentials, label: &'static str| {
+        let target = target.clone();
+        let fp = hk.fingerprint.clone();
+        async move {
+            let secret = serde_json::to_vec(&creds).unwrap();
+            let source = ClusterSource::Ssh {
+                host: target.host.clone(),
+                port: target.port,
+                user: target.user.clone(),
+                host_key_fingerprint: fp,
+                context: None,
+                kubeconfig_source: None,
+                secret_id: "s".into(),
+            };
+            let built = build_from_source(&source, Some(secret))
+                .await
+                .unwrap_or_else(|e| panic!("{label}: {e}"));
+            let info = built
+                .client
+                .apiserver_version()
+                .await
+                .expect("version through tunnel");
+            let ssh_rt = built.ssh.as_ref().expect("ssh runtime");
+            println!(
+                "{label}: {} via {} (tunnel 127.0.0.1:{})",
+                info.git_version, ssh_rt.source, ssh_rt.tunnel.local_port
+            );
+            // several parallel requests share the tunnel
+            let nss = ops::list_objects(
+                built.client.clone(),
+                &builtin::namespaces(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            assert!(nss.iter().any(|n| n["metadata"]["name"] == "kube-system"));
+            let pods = ops::list_objects(
+                built.client.clone(),
+                &builtin::pods(),
+                Some("kube-system"),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            assert!(!pods.is_empty());
+            assert!(
+                built.refreshed_secret.is_some(),
+                "fresh kubeconfig must be stored"
+            );
+            built
+        }
+    };
+    if key.is_some() {
+        let built = run(creds.clone(), "certificate/key login").await;
+        // exec through the tunnel (WebSocket upgrade over SSH)
+        let pods = ops::list_objects(
+            built.client.clone(),
+            &builtin::pods(),
+            Some("kube-system"),
+            None,
+            Some("status.phase=Running"),
+            None,
+        )
+        .await
+        .unwrap();
+        let name = pods
+            .iter()
+            .map(|p| p["metadata"]["name"].as_str().unwrap_or("").to_string())
+            .find(|n| n.starts_with("local-path-provisioner"))
+            .expect("pod");
+        let exec = Arc::new(ExecManager::default());
+        let output: Arc<Mutex<Vec<u8>>> = Arc::default();
+        let out = output.clone();
+        let session = exec
+            .start(
+                built.client.clone(),
+                ExecTarget {
+                    cluster_id: "ssh",
+                    namespace: "kube-system",
+                    pod: &name,
+                    container: None,
+                    shell: "sh",
+                    cols: 80,
+                    rows: 24,
+                },
+                move |d| {
+                    out.lock().extend(d);
+                    true
+                },
+                |_| {},
+            )
+            .await
+            .expect("exec through ssh tunnel");
+        exec.write(&session, b"echo through-ssh-$((20+22))\n".to_vec())
+            .await
+            .unwrap();
+        assert!(
+            wait_until(Duration::from_secs(15), || String::from_utf8_lossy(
+                &output.lock()
+            )
+            .contains("through-ssh-42"))
+            .await
+        );
+        exec.close(&session);
+    }
+    if password.is_some() {
+        let pw_only = SshCredentials {
+            password: password.clone(),
+            ..Default::default()
+        };
+        run(pw_only, "password login").await;
+    }
+}

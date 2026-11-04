@@ -19,6 +19,20 @@ the same cluster (screenshots in `docs/screenshots`).
 | 10 | Security, tests & performance | Vault (OS keychain + XChaCha20-Poly1305), input validation, restrictive capabilities & CSP, audit log + export, RBAC-aware actions; virtualised tables, shared watch cache with idle teardown, row summarisation in Rust; clippy `-D warnings` | 40 Rust unit tests, 15 frontend tests, 3 e2e tests, CI |
 | 11 | Installer, updater, releases | Bundles for Windows/macOS/Linux, updater plugin + UI, release workflow with signed updater artifacts; `manifex-agent` with Dockerfile and manifests | CI workflow, `docs/RELEASE.md` |
 
+## Follow-up: connection "via SSH server" (0.2.0)
+
+Verified against a real OpenSSH server (port 2222) in front of k3s with a user
+`deploy` that has **no** kubeconfig of its own and can read the root-only
+`/etc/rancher/k3s/k3s.yaml` only through `sudo` with a password:
+
+- login with an OpenSSH **user certificate** (sshd: `Accepted certificate ID
+  "deploy-cert" … signed by ED25519 CA`) and with password only,
+- kubeconfig discovered via `sudo -S`, API reachable through the tunnel, exec
+  (WebSocket) through SSH, wrong pinned host key refused (e2e
+  `ssh_connection_fetches_kubeconfig_and_tunnels`),
+- full UI flow in the app: default key + certificate detected, fingerprint
+  confirmation, test, save, automatic reconnect after app restart.
+
 ## Findings fixed during verification
 
 Running the real application against a cluster surfaced issues that unit tests

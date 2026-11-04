@@ -459,3 +459,283 @@ pub async fn list_api_resources(
     let discovery = conn.discovery(refresh.unwrap_or(false)).await?;
     Ok(resources::list_api_resources(&discovery))
 }
+
+// ------------------------------------------------------------------ SSH
+
+use crate::k8s::ssh::{self, HostKeyInfo, SshCredentials, SshTarget};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshKeyInfo {
+    pub path: String,
+    pub encrypted: bool,
+    pub algorithm: String,
+    pub has_certificate: bool,
+}
+
+fn key_info(path: &std::path::Path) -> AppResult<SshKeyInfo> {
+    let (pem, cert) = ssh::read_key_file(path)?;
+    let (encrypted, algorithm) = ssh::describe_key(&pem)?;
+    Ok(SshKeyInfo {
+        path: path.to_string_lossy().to_string(),
+        encrypted,
+        algorithm,
+        has_certificate: cert.is_some(),
+    })
+}
+
+/// Default keys found in ~/.ssh – used automatically when no key is selected.
+#[tauri::command]
+pub async fn ssh_default_keys() -> AppResult<Vec<SshKeyInfo>> {
+    Ok(ssh::default_keys()
+        .iter()
+        .filter_map(|p| key_info(p).ok())
+        .collect())
+}
+
+/// Native file dialog for a private key; the key content never reaches the webview.
+#[tauri::command]
+pub async fn pick_ssh_key_file(app: AppHandle) -> AppResult<Option<SshKeyInfo>> {
+    let mut builder = app.dialog().file().set_title("Choose SSH private key");
+    if let Some(home) = dirs::home_dir() {
+        let dir = home.join(".ssh");
+        builder = builder.set_directory(if dir.is_dir() { dir } else { home });
+    }
+    let picked = tokio::task::spawn_blocking(move || builder.blocking_pick_file()).await?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path
+        .into_path()
+        .map_err(|_| AppError::validation("unsupported file location"))?;
+    Ok(Some(key_info(&path)?))
+}
+
+#[tauri::command]
+pub async fn ssh_probe_host(host: String, port: Option<u16>) -> AppResult<HostKeyInfo> {
+    let target = SshTarget {
+        host,
+        port: port.unwrap_or(22),
+        user: "probe".into(),
+    };
+    ssh::probe_host_key(&target).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshClusterRequest {
+    pub name: String,
+    pub host: String,
+    pub port: Option<u16>,
+    pub user: String,
+    /// Path chosen with `pick_ssh_key_file` (read by the core).
+    pub key_path: Option<String>,
+    /// Pasted private key.
+    pub key_pem: Option<String>,
+    /// Pasted OpenSSH certificate (otherwise `<key>-cert.pub` is used if present).
+    pub certificate: Option<String>,
+    pub passphrase: Option<String>,
+    /// Login and/or sudo password.
+    pub password: Option<String>,
+    pub host_key_fingerprint: String,
+    pub context: Option<String>,
+    pub group: Option<String>,
+    pub environment: Option<String>,
+}
+
+impl SshClusterRequest {
+    fn target(&self) -> SshTarget {
+        SshTarget {
+            host: self.host.trim().to_string(),
+            port: self.port.unwrap_or(22),
+            user: self.user.trim().to_string(),
+        }
+    }
+
+    fn credentials(&self) -> AppResult<SshCredentials> {
+        let nonempty = |v: &Option<String>| v.clone().filter(|s| !s.trim().is_empty());
+        let mut creds = SshCredentials {
+            private_key: nonempty(&self.key_pem),
+            passphrase: nonempty(&self.passphrase),
+            certificate: nonempty(&self.certificate),
+            password: nonempty(&self.password),
+            kubeconfig: None,
+        };
+        if creds.private_key.is_none() {
+            let paths: Vec<std::path::PathBuf> = match nonempty(&self.key_path) {
+                Some(p) => vec![std::path::PathBuf::from(p)],
+                None => ssh::default_keys(),
+            };
+            for p in paths {
+                let Ok((pem, cert)) = ssh::read_key_file(&p) else {
+                    continue;
+                };
+                // Skip encrypted default keys we cannot open.
+                if let Ok((true, _)) = ssh::describe_key(&pem) {
+                    if creds.passphrase.is_none() && self.key_path.is_none() {
+                        continue;
+                    }
+                }
+                creds.private_key = Some(pem);
+                if creds.certificate.is_none() {
+                    creds.certificate = cert;
+                }
+                break;
+            }
+        }
+        if creds.private_key.is_none() && creds.password.is_none() {
+            return Err(AppError::validation(
+                "provide an SSH key, certificate or password",
+            ));
+        }
+        Ok(creds)
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTestResult {
+    pub ok: bool,
+    pub message: Option<String>,
+    pub kubeconfig_source: Option<String>,
+    pub contexts: Vec<String>,
+    pub context: Option<String>,
+    pub version: Option<String>,
+    pub identity: Option<String>,
+    pub latency_ms: u64,
+}
+
+async fn run_ssh_test(
+    request: &SshClusterRequest,
+    creds: &SshCredentials,
+) -> AppResult<(SshTestResult, Option<ssh::SshSession>)> {
+    let start = std::time::Instant::now();
+    let target = request.target();
+    target.validate()?;
+    ssh::validate_fingerprint(&request.host_key_fingerprint)?;
+    if let Some(c) = request.context.as_deref().filter(|c| !c.is_empty()) {
+        ssh::validate_context(c)?;
+    }
+    let session = ssh::establish(
+        &target,
+        creds,
+        &request.host_key_fingerprint,
+        request.context.as_deref(),
+    )
+    .await?;
+    let contexts = session
+        .kubeconfig
+        .contexts
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    let config =
+        kubeconfig::build_config_from(session.kubeconfig.clone(), session.context.clone()).await?;
+    let client = kube::Client::try_from(config)?;
+    let info = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        client.apiserver_version(),
+    )
+    .await
+    .map_err(|_| {
+        AppError::Connection("API server did not respond through the SSH tunnel".into())
+    })??;
+    let identity = {
+        use k8s_openapi::api::authentication::v1::SelfSubjectReview;
+        let api: kube::Api<SelfSubjectReview> = kube::Api::all(client.clone());
+        api.create(
+            &kube::api::PostParams::default(),
+            &SelfSubjectReview::default(),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.status)
+        .and_then(|s| s.user_info)
+        .and_then(|u| u.username)
+    };
+    Ok((
+        SshTestResult {
+            ok: true,
+            message: None,
+            kubeconfig_source: Some(session.source.clone()),
+            contexts,
+            context: Some(session.context.clone()),
+            version: Some(info.git_version),
+            identity,
+            latency_ms: start.elapsed().as_millis() as u64,
+        },
+        Some(session),
+    ))
+}
+
+#[tauri::command]
+pub async fn test_ssh_cluster(request: SshClusterRequest) -> AppResult<SshTestResult> {
+    let creds = request.credentials()?;
+    match run_ssh_test(&request, &creds).await {
+        Ok((r, _session)) => Ok(r),
+        Err(e) => Ok(SshTestResult {
+            ok: false,
+            message: Some(e.to_string()),
+            kubeconfig_source: None,
+            contexts: vec![],
+            context: None,
+            version: None,
+            identity: None,
+            latency_ms: 0,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn add_ssh_cluster(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: SshClusterRequest,
+) -> AppResult<ClusterProfile> {
+    let mut creds = request.credentials()?;
+    let (result, session) = run_ssh_test(&request, &creds).await?;
+    let session = session.expect("session");
+    creds.kubeconfig = session.fetched_kubeconfig.clone();
+    let secret_id = format!("ssh-{}", uuid::Uuid::new_v4());
+    let target = request.target();
+    let source = ClusterSource::Ssh {
+        host: target.host.clone(),
+        port: target.port,
+        user: target.user.clone(),
+        host_key_fingerprint: request.host_key_fingerprint.clone(),
+        context: result.context.clone(),
+        kubeconfig_source: result.kubeconfig_source.clone(),
+        secret_id: secret_id.clone(),
+    };
+    let name = if request.name.trim().is_empty() {
+        target.host.clone()
+    } else {
+        request.name.clone()
+    };
+    let profile = new_profile(
+        name,
+        source,
+        request.group.clone(),
+        request.environment.clone(),
+    )?;
+    state
+        .db
+        .put_secret(&state.vault, &secret_id, &serde_json::to_vec(&creds)?)?;
+    if let Err(e) = state.db.insert_cluster(&profile) {
+        let _ = state.db.delete_secret(&secret_id);
+        return Err(e);
+    }
+    state.db.add_audit(NewAudit {
+        cluster_id: Some(profile.id.clone()),
+        cluster_name: Some(profile.name.clone()),
+        action: "cluster.add".into(),
+        outcome: "success".into(),
+        detail: Some(format!(
+            "ssh {}@{} ({})",
+            target.user,
+            target.host,
+            result.kubeconfig_source.unwrap_or_default()
+        )),
+        ..Default::default()
+    })?;
+    crate::desktop::tray::refresh(&app);
+    Ok(profile)
+}

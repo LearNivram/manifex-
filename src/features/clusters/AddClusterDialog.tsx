@@ -6,6 +6,7 @@ import { cn } from "@/lib/format";
 import { api, errorMessage, type DirectClusterRequest } from "@/lib/ipc";
 import type { ConnectionTestResult, DiscoveredKubeconfig } from "@/lib/types";
 import { useApp } from "@/store/app";
+import { SshConnectTab } from "./SshConnectTab";
 
 const ENVIRONMENTS = [
   { value: "development", label: "Development" },
@@ -271,7 +272,7 @@ function DirectTab({ onDone }: { onDone: () => void }) {
 export function AddClusterDialog() {
   const open = useApp((s) => s.addClusterOpen);
   const setOpen = useApp((s) => s.setAddClusterOpen);
-  const [tab, setTab] = useState<"kubeconfig" | "direct">("kubeconfig");
+  const [tab, setTab] = useState<"kubeconfig" | "ssh" | "direct">("kubeconfig");
   useEffect(() => {
     if (open) setTab("kubeconfig");
   }, [open]);
@@ -283,10 +284,13 @@ export function AddClusterDialog() {
           onChange={setTab}
           tabs={[
             { id: "kubeconfig", label: "From kubeconfig" },
+            { id: "ssh", label: "Via SSH server" },
             { id: "direct", label: "Direct connection" },
           ]}
         />
-        {open && (tab === "kubeconfig" ? <KubeconfigTab onDone={() => setOpen(false)} /> : <DirectTab onDone={() => setOpen(false)} />)}
+        {open && tab === "kubeconfig" && <KubeconfigTab onDone={() => setOpen(false)} />}
+        {open && tab === "ssh" && <SshConnectTab onDone={() => setOpen(false)} />}
+        {open && tab === "direct" && <DirectTab onDone={() => setOpen(false)} />}
       </div>
     </Dialog>
   );

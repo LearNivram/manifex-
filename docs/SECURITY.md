@@ -16,6 +16,18 @@
   copy.
 - Key material is zeroised on drop.
 
+## SSH connections
+
+- The server's host key is pinned (SHA256 fingerprint) when the cluster is added:
+  entries in `~/.ssh/known_hosts` are trusted automatically, unknown hosts must be
+  confirmed by the user, and a key that differs from known_hosts or from the pinned
+  fingerprint is always refused. No credentials are sent before the key is trusted.
+- Remote commands are fixed constants (reading well-known kubeconfig paths, with
+  `sudo -S` only when a password was given); nothing user-supplied is interpolated.
+- The tunnel listens on 127.0.0.1 only, on a random port, for the lifetime of the
+  connection. Kubernetes TLS verification is unchanged (`tls-server-name` = the API
+  server's original name).
+
 ## Transport
 
 - Only `https://` API endpoints are accepted.

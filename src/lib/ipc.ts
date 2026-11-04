@@ -42,6 +42,11 @@ export const api = {
     call<T.ClusterProfile[]>("add_kubeconfig_clusters", { entries }),
   testDirectCluster: (request: DirectClusterRequest) => call<T.ConnectionTestResult>("test_direct_cluster", { request }),
   addDirectCluster: (request: DirectClusterRequest) => call<T.ClusterProfile>("add_direct_cluster", { request }),
+  sshDefaultKeys: () => call<T.SshKeyInfo[]>("ssh_default_keys"),
+  pickSshKeyFile: () => call<T.SshKeyInfo | null>("pick_ssh_key_file"),
+  sshProbeHost: (host: string, port: number) => call<T.HostKeyInfo>("ssh_probe_host", { host, port }),
+  testSshCluster: (request: SshClusterRequest) => call<T.SshTestResult>("test_ssh_cluster", { request }),
+  addSshCluster: (request: SshClusterRequest) => call<T.ClusterProfile>("add_ssh_cluster", { request }),
   updateCluster: (id: string, patch: Partial<Record<string, unknown>>) => call<T.ClusterProfile>("update_cluster", { id, patch }),
   removeCluster: (id: string) => call<void>("remove_cluster", { id }),
   testCluster: (id: string) => call<T.ConnectionTestResult>("test_cluster", { id }),
@@ -163,6 +168,22 @@ export interface DirectClusterRequest {
   token?: string;
   certPem?: string;
   keyPem?: string;
+  group?: string;
+  environment?: string;
+}
+
+export interface SshClusterRequest {
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  keyPath?: string;
+  keyPem?: string;
+  certificate?: string;
+  passphrase?: string;
+  password?: string;
+  hostKeyFingerprint: string;
+  context?: string;
   group?: string;
   environment?: string;
 }
