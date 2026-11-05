@@ -282,6 +282,13 @@ impl AlertEngine {
             let Some(engine) = engine.upgrade() else {
                 return;
             };
+            if let Err(e) = &ev {
+                if is_permission_error(e) {
+                    drop(engine);
+                    tokio::time::sleep(super::watch::PERMISSION_RETRY).await;
+                    continue;
+                }
+            }
             // Only live updates – the initial list contains historic events.
             let Ok(watcher::Event::Apply(ev)) = ev else {
                 continue;
@@ -357,6 +364,12 @@ impl AlertEngine {
                 return;
             };
             let node = match ev {
+                Err(e) if is_permission_error(&e) => {
+                    // No permission to list nodes (e.g. an agent with the "edit" role).
+                    drop(engine);
+                    tokio::time::sleep(super::watch::PERMISSION_RETRY).await;
+                    continue;
+                }
                 Ok(watcher::Event::InitApply(n)) => {
                     if let Some((name, s)) = node_state(&n) {
                         state.insert(name, s);
@@ -441,6 +454,11 @@ fn node_state(n: &Node) -> Option<(String, (bool, Vec<String>))> {
         })
         .unwrap_or_default();
     Some((name, (ready, pressures)))
+}
+
+/// 401/403 don't heal by retrying quickly; callers pause instead of hammering the API server.
+fn is_permission_error(e: &watcher::Error) -> bool {
+    matches!(super::watch::status_of(e), Some(401 | 403))
 }
 
 #[cfg(test)]

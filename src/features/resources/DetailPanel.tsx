@@ -11,6 +11,7 @@ import { runAction } from "./actions";
 import { kindByRef, KINDS } from "./catalog";
 import { ActionMenu } from "./ResourceView";
 import { summarizeContainers } from "./podInfo";
+import { ImageEditor } from "./ImageEditor";
 
 const YamlViewer = lazy(() => import("@/features/editor/YamlViewer"));
 
@@ -394,6 +395,9 @@ export function DetailPanel() {
             />
             {kind === "Pod" && <PodDetails obj={obj} sel={sel} />}
             {isWorkload && <WorkloadDetails obj={obj} row={row} />}
+            {["Deployment", "StatefulSet", "DaemonSet", "CronJob"].includes(kind) && sel.namespace && (
+              <ImageEditor key={obj.metadata?.resourceVersion} clusterId={sel.clusterId} resource={sel.resource} namespace={sel.namespace} name={sel.name} obj={obj} />
+            )}
             {kind === "Node" && <NodeDetails obj={obj} />}
             {kind === "Service" && <ServiceDetails obj={obj} />}
             {(kind === "ConfigMap" || kind === "Secret") && <SecretOrConfigData obj={obj} secret={kind === "Secret"} />}

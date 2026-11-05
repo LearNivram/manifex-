@@ -19,7 +19,7 @@ function countBy(rows: Row[]) {
   return c;
 }
 
-function HealthTile({ title, icon, rows, ready, onClick }: { title: string; icon: React.ReactNode; rows: Row[]; ready: boolean; onClick: () => void }) {
+function HealthTile({ title, icon, rows, ready, forbidden, onClick }: { title: string; icon: React.ReactNode; rows: Row[]; ready: boolean; forbidden?: boolean; onClick: () => void }) {
   const c = countBy(rows);
   const problems = c.error + c.warning;
   return (
@@ -27,19 +27,23 @@ function HealthTile({ title, icon, rows, ready, onClick }: { title: string; icon
       <Donut
         size={64}
         segments={(Object.keys(c) as Health[]).map((h) => ({ value: c[h], color: H_COLORS[h] }))}
-        label={ready ? <span className="tabular">{rows.length}</span> : <Spinner />}
+        label={forbidden ? <span className="text-subtle">–</span> : ready ? <span className="tabular">{rows.length}</span> : <Spinner />}
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex items-center gap-2 text-[13px] font-semibold">
           {icon}
           {title}
         </span>
-        <span className="text-[12px] text-muted">
-          {c.ok} healthy
-          {c.pending ? ` · ${c.pending} pending` : ""}
-          {c.neutral ? ` · ${c.neutral} completed` : ""}
-        </span>
-        {problems > 0 ? <span className="text-[12px] font-medium text-err">{problems} need attention</span> : <span className="text-[12px] text-ok">All good</span>}
+        {forbidden ? (
+          <span className="text-[12px] text-muted">No permission to list {title.toLowerCase()} with this identity</span>
+        ) : (
+          <span className="text-[12px] text-muted">
+            {c.ok} healthy
+            {c.pending ? ` · ${c.pending} pending` : ""}
+            {c.neutral ? ` · ${c.neutral} completed` : ""}
+          </span>
+        )}
+        {forbidden ? null : problems > 0 ? <span className="text-[12px] font-medium text-err">{problems} need attention</span> : <span className="text-[12px] text-ok">All good</span>}
       </div>
       <ArrowRight className="size-4 text-subtle" />
     </button>
@@ -94,9 +98,9 @@ export function OverviewView() {
       <div className="min-h-0 flex-1 overflow-auto p-5">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <HealthTile title="Nodes" icon={<Server className="size-4 text-muted" />} rows={nodes.rows} ready={nodes.ready} onClick={() => navigate("nodes")} />
-            <HealthTile title="Deployments" icon={<Layers className="size-4 text-muted" />} rows={deployments.rows} ready={deployments.ready} onClick={() => navigate("deployments")} />
-            <HealthTile title="Pods" icon={<Container className="size-4 text-muted" />} rows={pods.rows} ready={pods.ready} onClick={() => navigate("pods")} />
+            <HealthTile title="Nodes" icon={<Server className="size-4 text-muted" />} rows={nodes.rows} ready={nodes.ready} forbidden={nodes.forbidden} onClick={() => navigate("nodes")} />
+            <HealthTile title="Deployments" icon={<Layers className="size-4 text-muted" />} rows={deployments.rows} ready={deployments.ready} forbidden={deployments.forbidden} onClick={() => navigate("deployments")} />
+            <HealthTile title="Pods" icon={<Container className="size-4 text-muted" />} rows={pods.rows} ready={pods.ready} forbidden={pods.forbidden} onClick={() => navigate("pods")} />
           </div>
 
           <Section

@@ -33,6 +33,22 @@ Verified against a real OpenSSH server (port 2222) in front of k3s with a user
 - full UI flow in the app: default key + certificate detected, fingerprint
   confirmation, test, save, automatic reconnect after app restart.
 
+## Follow-up: agent, updates & image versions (0.3.0)
+
+Verified against k3s and the SSH test server:
+
+- one-click install of the agent via the SSH connection (NodePort), generated CA
+  verified by the client, "edge-server (agent)" connection created and connected,
+  `edit` role enforced (creating a ClusterRoleBinding through the agent is denied),
+- image change of `shop/api` from `nginx:1.27` to `nginx:1.27.3` through the
+  agent with production confirmation, revision 2 + change-cause,
+- agent self-update 0.2.9 → 0.3.0 through the agent connection itself without
+  losing the connection, removal (e2e `agent_one_click_install_update_and_set_image`).
+
+Found and fixed: the alert engine retried forbidden node watches about twice per
+second (now paused for 60 s on 401/403), the overview showed "0 nodes · all good"
+without permission, and the Updates panel did not refresh after an install.
+
 ## Findings fixed during verification
 
 Running the real application against a cluster surfaced issues that unit tests

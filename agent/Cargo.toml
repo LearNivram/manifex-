@@ -1,6 +1,6 @@
 [package]
 name = "manifex-agent"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "In-cluster agent that exposes the Kubernetes API to Manifex through an authenticated TLS endpoint"

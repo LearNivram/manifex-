@@ -12,13 +12,18 @@ logs, metrics, RBAC) and runs on Windows, macOS and Linux.
 - **Multi-cluster** – kubeconfig discovery & import, direct token / client
   certificate connections, **"via SSH server"** (log in with your SSH key /
   OpenSSH certificate / password – Manifex fetches the kubeconfig from the server
-  and tunnels the API, nothing to install remotely) and agent-based access to
-  private clusters ([`agent/`](agent/)). Favourites, groups, environment tags, per-cluster colours,
+  and tunnels the API, nothing to install remotely) and the **Manifex agent**:
+  installed into a cluster with one click, Manifex then connects through it
+  ([`agent/`](agent/)). Favourites, groups, environment tags, per-cluster colours,
   several windows side by side, cross-cluster search and cluster comparison.
 - **Wrong-cluster protection** – the active cluster and its environment are always
   visible (title bar stripe, badge, status bar, every confirmation). Destructive
   actions on *production* clusters require typing the object name – enforced in the
   Rust core, not just the UI.
+- **Updates in one place** – a small Updates panel in the status bar updates the
+  Manifex app itself, the agent in each cluster, and every workload has an
+  "Images / versions" editor to roll out a new image tag (with change-cause for
+  rollout history / rollback).
 - **Live everything** – shared, cached Kubernetes watches feed virtualised tables
   that stay smooth with tens of thousands of objects.
 - **Workloads, networking, storage, configuration, RBAC, CRDs** – Pods,
@@ -51,6 +56,8 @@ logs, metrics, RBAC) and runs on Windows, macOS and Linux.
 |---|---|
 | ![Pod details](docs/screenshots/pod-details.png) | ![Terminal](docs/screenshots/terminal.png) |
 | ![YAML diff](docs/screenshots/yaml-dry-run-diff.png) | ![Production confirmation](docs/screenshots/production-delete-confirmation.png) |
+| ![Install the agent](docs/screenshots/agent-install.png) | ![Updates panel](docs/screenshots/updates-popover.png) |
+| ![Image version editor](docs/screenshots/image-editor.png) | ![Agent installed](docs/screenshots/agent-installed.png) |
 
 ## Getting started
 

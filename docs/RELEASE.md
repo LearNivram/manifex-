@@ -26,6 +26,20 @@ release workflow uploads `latest.json` and signatures automatically
 (`includeUpdaterJson: true`). Updater artifacts are only produced for release
 builds (`src-tauri/tauri.release.conf.json`), so local builds do not need the key.
 
+The public key of the project's key pair is already in `tauri.conf.json`. Without
+the `TAURI_SIGNING_PRIVATE_KEY` secret the workflow still builds installers but
+skips the updater artifacts. The in-app updater only sees **published** releases
+(`releases/latest` ignores drafts).
+
+## Agent image
+
+`.github/workflows/agent-image.yml` builds `agent/` for linux/amd64 and
+linux/arm64 and pushes `ghcr.io/<owner>/manifex-agent:<agent version>` and
+`:latest` (on changes under `agent/` or manually). Make the package **public**
+(GitHub → Packages → manifex-agent → Package settings → Change visibility), so
+clusters can pull it without credentials. The app installs the image tag that
+matches its own version.
+
 ## Code signing (recommended)
 
 - **macOS:** set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
@@ -53,7 +67,7 @@ Installer formats:
 
 ## In-app updates
 
-Settings → Updates checks the endpoint, downloads with progress, verifies the
+The Updates panel in the status bar (and Settings → Updates) checks the endpoint, downloads with progress, verifies the
 signature and restarts. With "Check for updates automatically" enabled the main
 window checks once at start-up and shows a notification when a new version exists.
 

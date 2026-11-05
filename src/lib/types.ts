@@ -411,3 +411,21 @@ export interface SshTestResult {
   identity?: string | null;
   latencyMs: number;
 }
+
+export interface AgentStatus {
+  installed: boolean;
+  image?: string | null;
+  version?: string | null;
+  ready?: string | null;
+  healthy: boolean;
+  exposure?: string | null;
+  role?: string | null;
+  latestVersion: string;
+  updateAvailable: boolean;
+  message?: string | null;
+}
+
+export interface AgentInstallResponse {
+  result: { endpoint: string; alternativeEndpoints: string[]; version: string; image: string; role: string; exposure: string };
+  profile: ClusterProfile;
+}

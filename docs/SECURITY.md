@@ -28,6 +28,23 @@
   connection. Kubernetes TLS verification is unchanged (`tls-server-name` = the API
   server's original name).
 
+## Manifex agent
+
+- The agent terminates TLS with a certificate issued by a **private CA generated
+  per installation**; the CA is pinned in the agent connection, so no public CA or
+  TLS skip is involved. The CA key never leaves the desktop (only `ca.crt` is
+  stored in the cluster).
+- The access token is 256 random bits, stored as a Secret in the cluster and in
+  the encrypted vault on the desktop. The agent compares it in constant time and
+  strips client `Authorization` / `Impersonate-*` headers.
+- Its permissions are an ordinary Kubernetes role chosen at install time
+  (`edit` by default) – everything done through the agent is limited by it.
+- The pod runs as UID/GID 65532, non-root, read-only root filesystem, no
+  privilege escalation, all capabilities dropped.
+- Installing, updating and removing the agent and changing image versions are
+  audited; removal and image rollouts on production clusters require
+  confirmation (typed name for removal).
+
 ## Transport
 
 - Only `https://` API endpoints are accepted.

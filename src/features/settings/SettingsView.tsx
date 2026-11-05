@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { useUpdater } from "@/hooks/useUpdater";
 import { CheckCircle2, KeyRound, RefreshCw, ShieldAlert } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { Badge, Button, ErrorBanner, Field, Input, KeyValue, Section, Select, Toggle } from "@/components/ui";
@@ -20,38 +19,6 @@ function Row({ title, description, children }: { title: string; description?: Re
       <div className="shrink-0">{children}</div>
     </div>
   );
-}
-
-export function useUpdater() {
-  const [state, setState] = useState<{ status: "idle" | "checking" | "available" | "none" | "downloading" | "error"; update?: Update; progress?: number; error?: string }>({ status: "idle" });
-  const checkNow = async () => {
-    setState({ status: "checking" });
-    try {
-      const update = await check();
-      setState(update ? { status: "available", update } : { status: "none" });
-    } catch (e) {
-      setState({ status: "error", error: errorMessage(e) });
-    }
-  };
-  const install = async () => {
-    if (!state.update) return;
-    let total = 0;
-    let done = 0;
-    setState((s) => ({ ...s, status: "downloading", progress: 0 }));
-    try {
-      await state.update.downloadAndInstall((ev) => {
-        if (ev.event === "Started") total = ev.data.contentLength ?? 0;
-        if (ev.event === "Progress") {
-          done += ev.data.chunkLength;
-          setState((s) => ({ ...s, progress: total ? (done / total) * 100 : undefined }));
-        }
-      });
-      await relaunch();
-    } catch (e) {
-      setState({ status: "error", error: errorMessage(e) });
-    }
-  };
-  return { ...state, checkNow, install };
 }
 
 const SHORTCUTS: [string, string][] = [
@@ -206,7 +173,7 @@ export function SettingsView() {
                   Install & restart
                 </Button>
               ) : (
-                <Button icon={<RefreshCw className="size-3.5" />} loading={updater.status === "checking" || updater.status === "downloading"} onClick={updater.checkNow}>
+                <Button icon={<RefreshCw className="size-3.5" />} loading={updater.status === "checking" || updater.status === "downloading"} onClick={() => updater.check()}>
                   Check now
                 </Button>
               )}

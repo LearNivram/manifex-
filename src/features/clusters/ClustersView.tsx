@@ -1,4 +1,4 @@
-import { Activity, ExternalLink, GitCompare, MoreHorizontal, Pencil, Plug, PlugZap, Plus, Star, Trash2 } from "lucide-react";
+import { Activity, ExternalLink, GitCompare, MoreHorizontal, PackagePlus, Pencil, Plug, PlugZap, Plus, Star, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Badge,
@@ -23,6 +23,7 @@ import { api, errorMessage } from "@/lib/ipc";
 import type { ClusterView } from "@/lib/types";
 import { activateCluster, clusterColor, statusHealth } from "@/components/layout/ClusterSwitcher";
 import { EnvBadge } from "@/features/resources/actions";
+import { openAgentInstall } from "@/features/updates/AgentInstallDialog";
 import { ViewHeader } from "@/features/resources/ResourceView";
 import { useApp } from "@/store/app";
 
@@ -200,6 +201,11 @@ function ClusterCard({ c, onEdit, compareSel, onCompareToggle }: { c: ClusterVie
             <MenuItem icon={<ExternalLink className="size-3.5" />} onSelect={() => api.openWindow(c.profile.id)}>
               Open in new window
             </MenuItem>
+            {connected && c.profile.source.type !== "agent" && (
+              <MenuItem icon={<PackagePlus className="size-3.5" />} onSelect={() => openAgentInstall(c.profile.id)}>
+                Install Manifex agent…
+              </MenuItem>
+            )}
             <MenuItem icon={<GitCompare className="size-3.5" />} onSelect={onCompareToggle}>
               {compareSel ? "Remove from comparison" : "Select for comparison"}
             </MenuItem>

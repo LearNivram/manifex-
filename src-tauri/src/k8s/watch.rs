@@ -130,7 +130,10 @@ impl Drop for SubscriberGuard {
     }
 }
 
-fn status_of(err: &watcher::Error) -> Option<u16> {
+/// Delay before a watch that failed with 401/403 is attempted again.
+pub(crate) const PERMISSION_RETRY: Duration = Duration::from_secs(60);
+
+pub(crate) fn status_of(err: &watcher::Error) -> Option<u16> {
     match err {
         watcher::Error::InitialListFailed(kube::Error::Api(s))
         | watcher::Error::WatchStartFailed(kube::Error::Api(s))
@@ -188,48 +191,68 @@ impl WatchManager {
         let kind = key.resource.kind.clone();
         let weak = Arc::downgrade(&sw);
         let task = tokio::spawn(async move {
-            let mut stream = watcher(api, cfg).default_backoff().boxed();
-            let mut init_buf: HashMap<String, Row> = HashMap::new();
-            while let Some(ev) = stream.next().await {
-                let Some(sw) = weak.upgrade() else { return };
-                match ev {
-                    Ok(watcher::Event::Init) => init_buf.clear(),
-                    Ok(watcher::Event::InitApply(obj)) => {
-                        let row = to_row(&kind, &obj);
-                        init_buf.insert(row.uid.clone(), row);
+            // Permission errors (401/403) don't heal by retrying quickly – the default
+            // back-off would hammer the API server (and an agent) several times a
+            // second. Pause instead and re-check RBAC periodically.
+            loop {
+                let mut stream = watcher(api.clone(), cfg.clone()).default_backoff().boxed();
+                let mut init_buf: HashMap<String, Row> = HashMap::new();
+                let mut denied = false;
+                while let Some(ev) = stream.next().await {
+                    let Some(sw) = weak.upgrade() else { return };
+                    match ev {
+                        Ok(watcher::Event::Init) => init_buf.clear(),
+                        Ok(watcher::Event::InitApply(obj)) => {
+                            let row = to_row(&kind, &obj);
+                            init_buf.insert(row.uid.clone(), row);
+                        }
+                        Ok(watcher::Event::InitDone) => {
+                            let mut st = sw.state.lock();
+                            st.rows = std::mem::take(&mut init_buf);
+                            st.ready = true;
+                            st.last_error = None;
+                            let _ = sw.tx.send(Delta::Reset);
+                        }
+                        Ok(watcher::Event::Apply(obj)) => {
+                            let row = to_row(&kind, &obj);
+                            let mut st = sw.state.lock();
+                            st.rows.insert(row.uid.clone(), row.clone());
+                            let _ = sw.tx.send(Delta::Upsert(row));
+                        }
+                        Ok(watcher::Event::Delete(obj)) => {
+                            let row = to_row(&kind, &obj);
+                            let mut st = sw.state.lock();
+                            st.rows.remove(&row.uid);
+                            let _ = sw.tx.send(Delta::Delete(row.uid));
+                        }
+                        Err(e) => {
+                            let status = status_of(&e);
+                            let msg = match &e {
+                                watcher::Error::InitialListFailed(kube::Error::Api(s))
+                                | watcher::Error::WatchStartFailed(kube::Error::Api(s))
+                                | watcher::Error::WatchFailed(kube::Error::Api(s)) => {
+                                    s.message.clone()
+                                }
+                                other => other.to_string(),
+                            };
+                            tracing::debug!(error = %msg, "watch error");
+                            let mut st = sw.state.lock();
+                            st.last_error = Some((msg.clone(), status));
+                            let _ = sw.tx.send(Delta::Error(msg, status));
+                            if matches!(status, Some(401 | 403)) {
+                                denied = true;
+                                break;
+                            }
+                        }
                     }
-                    Ok(watcher::Event::InitDone) => {
-                        let mut st = sw.state.lock();
-                        st.rows = std::mem::take(&mut init_buf);
-                        st.ready = true;
-                        st.last_error = None;
-                        let _ = sw.tx.send(Delta::Reset);
-                    }
-                    Ok(watcher::Event::Apply(obj)) => {
-                        let row = to_row(&kind, &obj);
-                        let mut st = sw.state.lock();
-                        st.rows.insert(row.uid.clone(), row.clone());
-                        let _ = sw.tx.send(Delta::Upsert(row));
-                    }
-                    Ok(watcher::Event::Delete(obj)) => {
-                        let row = to_row(&kind, &obj);
-                        let mut st = sw.state.lock();
-                        st.rows.remove(&row.uid);
-                        let _ = sw.tx.send(Delta::Delete(row.uid));
-                    }
-                    Err(e) => {
-                        let status = status_of(&e);
-                        let msg = match &e {
-                            watcher::Error::InitialListFailed(kube::Error::Api(s))
-                            | watcher::Error::WatchStartFailed(kube::Error::Api(s))
-                            | watcher::Error::WatchFailed(kube::Error::Api(s)) => s.message.clone(),
-                            other => other.to_string(),
-                        };
-                        tracing::debug!(error = %msg, "watch error");
-                        let mut st = sw.state.lock();
-                        st.last_error = Some((msg.clone(), status));
-                        let _ = sw.tx.send(Delta::Error(msg, status));
-                    }
+                }
+                drop(stream);
+                if !denied {
+                    return;
+                }
+                tokio::time::sleep(PERMISSION_RETRY).await;
+                if weak.strong_count() == 0 {
+                    return;
                 }
             }
         });

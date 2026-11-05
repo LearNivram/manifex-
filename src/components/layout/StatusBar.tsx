@@ -1,6 +1,7 @@
 import { AlertTriangle, Fingerprint, Gauge, Plug } from "lucide-react";
 import { StatusDot } from "@/components/ui";
 import { useActiveCluster, useApp } from "@/store/app";
+import { UpdatesPopover } from "@/features/updates/UpdatesPopover";
 import { statusHealth } from "./ClusterSwitcher";
 
 export function StatusBar() {
@@ -45,6 +46,7 @@ export function StatusBar() {
       <span className="flex items-center gap-1">
         <Plug className="size-3" /> {connected}/{clusters.length} connected
       </span>
+      <UpdatesPopover />
     </footer>
   );
 }

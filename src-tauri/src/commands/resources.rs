@@ -545,3 +545,37 @@ pub async fn workload_pods(
     .await?;
     Ok(items.iter().map(|v| summarize("Pod", v)).collect())
 }
+
+#[tauri::command]
+pub async fn set_container_image(
+    state: State<'_, AppState>,
+    cluster_id: String,
+    resource: ResourceRef,
+    namespace: String,
+    name: String,
+    container: String,
+    image: String,
+) -> AppResult<String> {
+    validate::namespace(&namespace)?;
+    let conn = state.conn(&cluster_id)?;
+    state
+        .audited(
+            &cluster_id,
+            AuditTarget {
+                action: "set.image",
+                resource: Some(resource.kind.clone()),
+                namespace: Some(namespace.clone()),
+                name: Some(name.clone()),
+                detail: Some(format!("{container} → {image}")),
+            },
+            ops::set_container_image(
+                conn.client.clone(),
+                &resource,
+                &namespace,
+                &name,
+                &container,
+                &image,
+            ),
+        )
+        .await
+}

@@ -1,6 +1,6 @@
 [package]
 name = "manifex"
-version = "0.2.0"
+version = "0.3.0"
 description = "Manifex – native Kubernetes management desktop application"
 authors = ["Manifex Contributors"]
 license = "Apache-2.0"
@@ -55,6 +55,7 @@ which = "7"
 dashmap = "6"
 secrecy = "0.10"
 urlencoding = "2"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
 russh = { version = "0.65", default-features = false, features = ["ring", "flate2", "rsa"] }
 
 [dev-dependencies]
@@ -66,3 +67,7 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Keep debug builds small: full debug info only for our own crate.
+[profile.dev.package."*"]
+debug = false

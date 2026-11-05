@@ -24,6 +24,8 @@ import { LogsView } from "@/features/logs/LogsView";
 import { MonitoringView } from "@/features/monitoring/MonitoringView";
 import { OverviewView } from "@/features/overview/OverviewView";
 import { ActionDialogs } from "@/features/resources/actions";
+import { AgentInstallDialog } from "@/features/updates/AgentInstallDialog";
+import { startUpdateChecks, useUpdater } from "@/hooks/useUpdater";
 import { KINDS, VIEW_KINDS } from "@/features/resources/catalog";
 import { DetailPanel } from "@/features/resources/DetailPanel";
 import { ResourceView } from "@/features/resources/ResourceView";
@@ -159,6 +161,7 @@ function useBootstrap() {
     const app = useApp.getState();
     const params = new URLSearchParams(window.location.search);
     const unlisten: Promise<() => void>[] = [];
+    let stopUpdateChecks: () => void = () => {};
 
     (async () => {
       const [settings, clusters] = await Promise.all([api.getSettings(), api.listClusters()]);
@@ -193,11 +196,15 @@ function useBootstrap() {
       } catch {
         /* notifications unavailable */
       }
-      if (settings.autoCheckUpdates && getCurrentWindow().label === "main") {
-        import("@tauri-apps/plugin-updater")
-          .then(({ check }) => check())
-          .then((u) => u && useApp.getState().pushNotice({ severity: "info", title: `Manifex ${u.version} is available`, message: "Open Settings → Updates to install." }))
-          .catch(() => {});
+      if (getCurrentWindow().label === "main") {
+        stopUpdateChecks = startUpdateChecks(settings.autoCheckUpdates);
+        let announced: string | null = null;
+        useUpdater.subscribe((s) => {
+          if (s.status === "available" && s.update && announced !== s.update.version) {
+            announced = s.update.version;
+            useApp.getState().pushNotice({ severity: "info", title: `Manifex ${s.update.version} is available`, message: "Click the update badge in the status bar to install." });
+          }
+        });
       }
     })().catch((e) => app.toast({ kind: "error", title: "Startup failed", message: String(e?.message ?? e) }));
 
@@ -224,7 +231,10 @@ function useBootstrap() {
     unlisten.push(listen<string>("menu://action", (e) => document.hasFocus() && handleMenuAction(e.payload)));
     unlisten.push(listen<string>("tray://open-cluster", (e) => activateCluster(e.payload)));
     unlisten.push(listen<string[]>("deeplink://open", () => api.takeDeepLinks().then(handleDeepLinks).catch(() => {})));
-    return () => unlisten.forEach((p) => p.then((f) => f()));
+    return () => {
+      stopUpdateChecks();
+      unlisten.forEach((p) => p.then((f) => f()));
+    };
   }, []);
 
   // Keyboard shortcuts
@@ -312,6 +322,7 @@ export default function App() {
       <NotificationCenter />
       <AddClusterDialog />
       <ActionDialogs />
+      <AgentInstallDialog />
       <ConfirmHost />
       <Toasts />
       {editor && (

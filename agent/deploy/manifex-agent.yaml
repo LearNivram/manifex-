@@ -60,11 +60,13 @@ spec:
       serviceAccountName: manifex-agent
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/learnivram/manifex-agent:0.1.0
+          image: ghcr.io/learnivram/manifex-agent:0.3.0
           ports:
             - containerPort: 8443
               name: https

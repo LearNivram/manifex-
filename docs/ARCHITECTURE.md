@@ -68,6 +68,32 @@ the React frontend renders state and sends intents over Tauri's IPC bridge.
 | `agent` | encrypted vault | HTTPS endpoint of a Manifex agent (see `agent/`) or another authenticating Kubernetes API gateway. |
 | `ssh` | encrypted vault (key, certificate, passphrase, password, last kubeconfig) | Logs in to an SSH server (OpenSSH certificate → public key → password, host key pinned), fetches the kubeconfig there (kubectl, ~/.kube/config, k3s, RKE2, kubeadm, MicroK8s, with `sudo` if needed) on every connect and tunnels the API through `direct-tcpip` channels from a local 127.0.0.1 port. TLS is still verified against the API server's real name. |
 
+### One-click agent (`k8s/agent_install.rs`)
+
+`agent_install` uses an existing connection (kubeconfig, SSH, token, …) to
+server-side-apply `Namespace manifex-system`, `ServiceAccount`, a
+`ClusterRoleBinding` to the chosen built-in role and a `Service`
+(LoadBalancer/NodePort). Once the reachable addresses are known (load-balancer
+ingress or node ExternalIP/InternalIP + node port, plus an optional public
+address) it generates a private CA and a server certificate for exactly those
+names (rcgen), a random 256-bit token, stores both as Secrets and rolls out the
+`Deployment` (non-root, read-only root FS, `maxUnavailable: 0`). The rollout wait
+surfaces `ErrImagePull`, `CrashLoopBackOff` and `Unschedulable` early. Afterwards
+an `agent` profile is created with the CA pinned and the token in the vault.
+
+`agent_status` / `agent_update` / `agent_uninstall` read the Deployment (role from
+the ClusterRoleBinding or the `manifex.dev/role` annotation), patch the image and
+version labels, and delete what was created (the namespace only if it carries
+`app.kubernetes.io/managed-by=manifex`). An update through the agent connection
+itself works: the new pod is ready before the old one stops and transport errors
+during the switch are retried.
+
+### Image versions (`ops::set_container_image`)
+
+A strategic-merge patch on `containers` / `initContainers` (CronJob:
+`jobTemplate`) plus the `kubernetes.io/change-cause` annotation; the previous image
+is returned for the confirmation toast. Image references are validated.
+
 Health: every connected cluster is probed (`/version`) every *n* seconds
 (configurable). On failure the state becomes `reconnecting`, a notification is
 raised, and probes continue with exponential back-off (2 s → 60 s). Watches use the

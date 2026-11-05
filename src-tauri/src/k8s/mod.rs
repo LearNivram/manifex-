@@ -1,5 +1,6 @@
 //! Kubernetes integration layer.
 
+pub mod agent_install;
 pub mod alerts;
 pub mod connection;
 pub mod exec;

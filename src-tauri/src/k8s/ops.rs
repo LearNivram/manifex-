@@ -673,6 +673,95 @@ pub async fn trigger_cronjob(client: Client, ns: &str, name: &str) -> AppResult<
     Ok(created.metadata.name.unwrap_or(job_name))
 }
 
+/// Validates a container image reference (registry/repo:tag@digest).
+pub fn validate_image_ref(image: &str) -> AppResult<()> {
+    let i = image.trim();
+    if i.is_empty()
+        || i.len() > 512
+        || i.starts_with('-')
+        || !i.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'/' | b':' | b'@' | b'_' | b'-')
+        })
+    {
+        return Err(AppError::validation("image reference is invalid"));
+    }
+    Ok(())
+}
+
+/// Equivalent of `kubectl set image`: changes one container's image (and records
+/// a change-cause so the rollout history shows what happened).
+pub async fn set_container_image(
+    client: Client,
+    res: &ResourceRef,
+    ns: &str,
+    name: &str,
+    container: &str,
+    image: &str,
+) -> AppResult<String> {
+    if !matches!(
+        res.kind.as_str(),
+        "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet" | "CronJob"
+    ) {
+        return Err(AppError::validation(format!(
+            "{} has no updatable pod template",
+            res.kind
+        )));
+    }
+    validate::object_name(name)?;
+    validate::object_name(container)?;
+    validate_image_ref(image)?;
+    let api = res.api_for_object(client, Some(ns))?;
+    let obj = timed(api.get(name)).await?;
+    let containers_path = if res.kind == "CronJob" {
+        "/spec/jobTemplate/spec/template/spec"
+    } else {
+        "/spec/template/spec"
+    };
+    let spec = obj
+        .data
+        .pointer(containers_path)
+        .cloned()
+        .ok_or_else(|| AppError::internal("object has no pod template"))?;
+    let (list, previous) = ["containers", "initContainers"]
+        .iter()
+        .find_map(|list| {
+            spec.get(*list)?
+                .as_array()?
+                .iter()
+                .find(|c| c.get("name").and_then(Value::as_str) == Some(container))
+                .map(|c| {
+                    (
+                        *list,
+                        c.get("image")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                })
+        })
+        .ok_or_else(|| AppError::NotFound(format!("container '{container}'")))?;
+    if previous == image.trim() {
+        return Err(AppError::validation(
+            "the container already uses this image",
+        ));
+    }
+    let cause = format!("manifex: {container} image {previous} → {}", image.trim());
+    let pod_spec = json!({ list: [{ "name": container, "image": image.trim() }] });
+    let patch = if res.kind == "CronJob" {
+        json!({
+            "metadata": { "annotations": { "kubernetes.io/change-cause": cause } },
+            "spec": { "jobTemplate": { "spec": { "template": { "spec": pod_spec } } } }
+        })
+    } else {
+        json!({
+            "metadata": { "annotations": { "kubernetes.io/change-cause": cause } },
+            "spec": { "template": { "spec": pod_spec } }
+        })
+    };
+    timed(api.patch(name, &PatchParams::default(), &Patch::Strategic(&patch))).await?;
+    Ok(previous)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

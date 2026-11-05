@@ -122,6 +122,16 @@ export const api = {
   execResize: (sessionId: string, cols: number, rows: number) => call<void>("exec_resize", { sessionId, cols, rows }),
   execClose: (sessionId: string) => call<void>("exec_close", { sessionId }),
 
+  setContainerImage: (clusterId: string, resource: T.ResourceRef, namespace: string, name: string, container: string, image: string) =>
+    call<string>("set_container_image", { clusterId, resource, namespace, name, container, image }),
+
+  // agent
+  agentStatus: (clusterId: string) => call<T.AgentStatus>("agent_status", { clusterId }),
+  agentInstall: (clusterId: string, options: { role: string; exposure: string; externalAddress?: string; image?: string }) =>
+    call<T.AgentInstallResponse>("agent_install", { clusterId, options }),
+  agentUpdate: (clusterId: string, version?: string) => call<T.AgentStatus>("agent_update", { clusterId, version }),
+  agentUninstall: (clusterId: string, confirm?: string) => call<void>("agent_uninstall", { clusterId, confirm }),
+
   // helm
   helmStatus: () => call<T.HelmStatus>("helm_status"),
   helmReleases: (clusterId: string, namespace?: string | null) => call<T.HelmRelease[]>("helm_releases", { clusterId, namespace }),

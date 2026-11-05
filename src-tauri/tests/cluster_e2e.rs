@@ -674,3 +674,165 @@ async fn ssh_connection_fetches_kubeconfig_and_tunnels() {
         run(pw_only, "password login").await;
     }
 }
+
+/// One-click agent installation through an existing connection, then connect via
+/// the agent, exec, set-image and uninstall. Needs MANIFEX_E2E_KUBECONFIG and the
+/// agent image available to the cluster (MANIFEX_E2E_AGENT_INSTALL=1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_one_click_install_update_and_set_image() {
+    use manifex_lib::k8s::agent_install::{self, AgentInstallOptions};
+    use manifex_lib::k8s::connection::build_from_source;
+    let Some((path, context)) = e2e_config() else {
+        return;
+    };
+    if std::env::var("MANIFEX_E2E_AGENT_INSTALL").is_err() {
+        eprintln!("MANIFEX_E2E_AGENT_INSTALL not set – skipping");
+        return;
+    }
+    let admin = build_from_source(&ClusterSource::Kubeconfig { path, context }, None)
+        .await
+        .unwrap()
+        .client;
+
+    let result = agent_install::install(
+        admin.clone(),
+        &AgentInstallOptions {
+            role: "edit".into(),
+            exposure: "NodePort".into(),
+            external_address: None,
+            image: None,
+        },
+    )
+    .await
+    .expect("agent install");
+    println!(
+        "agent installed at {} (also {:?})",
+        result.endpoint, result.alternative_endpoints
+    );
+
+    let st = agent_install::status(admin.clone()).await.unwrap();
+    assert!(st.installed && st.healthy, "{st:?}");
+    assert_eq!(st.version.as_deref(), Some(agent_install::AGENT_VERSION));
+    assert_eq!(st.role.as_deref(), Some("edit"));
+    assert!(!st.update_available);
+
+    // connect exactly like the generated profile does
+    let source = ClusterSource::Agent {
+        endpoint: result.endpoint.clone(),
+        ca_pem: Some(result.ca_pem.clone()),
+        proxy_url: None,
+        secret_id: "x".into(),
+    };
+    let via_agent = build_from_source(&source, Some(result.token.clone().into_bytes()))
+        .await
+        .expect("agent client")
+        .client;
+    let info = via_agent
+        .apiserver_version()
+        .await
+        .expect("version via agent");
+    println!("via agent: {}", info.git_version);
+
+    // edit role: may change deployments, set-image through the agent
+    let ns = format!("manifex-e2e-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let admin_conn_yaml = format!("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {ns}\n");
+    let _ = ops::list_objects(
+        admin.clone(),
+        &builtin::namespaces(),
+        None,
+        None,
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    {
+        let api = builtin::namespaces().api(admin.clone(), None);
+        let obj: kube::api::DynamicObject = serde_yaml::from_str(&admin_conn_yaml).unwrap();
+        api.create(&kube::api::PostParams::default(), &obj)
+            .await
+            .unwrap();
+    }
+    let dep: kube::api::DynamicObject = serde_yaml::from_str(&format!(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: {ns}\nspec:\n  replicas: 1\n  selector:\n    matchLabels: {{app: web}}\n  template:\n    metadata:\n      labels: {{app: web}}\n    spec:\n      containers:\n      - name: nginx\n        image: nginx:1.27\n"
+    ))
+    .unwrap();
+    builtin::deployments()
+        .api(via_agent.clone(), Some(&ns))
+        .create(&kube::api::PostParams::default(), &dep)
+        .await
+        .expect("create via agent (edit role)");
+    let prev = ops::set_container_image(
+        via_agent.clone(),
+        &builtin::deployments(),
+        &ns,
+        "web",
+        "nginx",
+        "nginx:1.27-alpine",
+    )
+    .await
+    .expect("set image");
+    assert_eq!(prev, "nginx:1.27");
+    let view = ops::get_object(via_agent.clone(), &builtin::deployments(), Some(&ns), "web")
+        .await
+        .unwrap();
+    assert_eq!(
+        view.object["spec"]["template"]["spec"]["containers"][0]["image"],
+        "nginx:1.27-alpine"
+    );
+    assert!(
+        view.object["metadata"]["annotations"]["kubernetes.io/change-cause"]
+            .as_str()
+            .unwrap()
+            .contains("1.27-alpine")
+    );
+    assert!(ops::set_container_image(
+        via_agent.clone(),
+        &builtin::deployments(),
+        &ns,
+        "web",
+        "nope",
+        "x:1"
+    )
+    .await
+    .is_err());
+
+    // the edit role must not be able to read cluster-scoped RBAC
+    let denied = ops::list_objects(
+        via_agent.clone(),
+        &ResourceRef::new(
+            "rbac.authorization.k8s.io",
+            "v1",
+            "ClusterRoleBinding",
+            "clusterrolebindings",
+            false,
+        ),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(denied.is_err(), "agent RBAC must be enforced");
+
+    // update (same version → no-op rollout) and uninstall
+    let st = agent_install::update(admin.clone(), None)
+        .await
+        .expect("update");
+    assert!(st.healthy);
+    ops::delete_object(
+        admin.clone(),
+        &builtin::namespaces(),
+        None,
+        &ns,
+        &DeleteOptions::default(),
+    )
+    .await
+    .unwrap();
+    agent_install::uninstall(admin.clone())
+        .await
+        .expect("uninstall");
+    assert!(wait_until(Duration::from_secs(90), || true).await);
+}
+
+use manifex_lib::k8s::resources::ResourceRef;

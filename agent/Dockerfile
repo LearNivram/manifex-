@@ -7,6 +7,7 @@ RUN cargo build --release --locked || cargo build --release
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /src/target/release/manifex-agent /manifex-agent
-USER nonroot:nonroot
+# numeric UID so Kubernetes can verify runAsNonRoot
+USER 65532:65532
 EXPOSE 8443
 ENTRYPOINT ["/manifex-agent"]
